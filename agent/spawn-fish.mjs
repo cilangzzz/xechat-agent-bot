@@ -34,7 +34,7 @@ for (let i = 0; i < count; i++) {
     ...process.env,
     BOT_USERNAME: name,
     CMD_PREFIX: `/${name}`,
-    AGENT_LOG: path.join(__dirname, `fish_${name}.log`),
+    AGENT_LOG: path.join(__dirname, 'log', `fish_${name}.log`),
   };
   const child = spawn(process.execPath, ['agent.mjs', name], { cwd: __dirname, env, detached: true, stdio: 'ignore', windowsHide: true });
   child.unref();

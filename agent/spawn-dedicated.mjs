@@ -14,7 +14,7 @@ const env = {
   OWNER: owner,
   OWNER_PREFIX: prefix,
   CMD_PREFIX: prefix,
-  AGENT_LOG: path.join(__dirname, `dedicated_${owner}.log`),
+  AGENT_LOG: path.join(__dirname, 'log', `dedicated_${owner}.log`),
 };
 const child = spawn(process.execPath, ['agent.mjs'], { cwd: __dirname, env, detached: true, stdio: 'ignore', windowsHide: true });
 child.unref();

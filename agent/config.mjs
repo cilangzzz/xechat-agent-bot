@@ -170,7 +170,7 @@ export function loadConfig(env = process.env) {
     minimaxImage: {
       apiKey: env.MINIMAX_API_KEY || '',          // 留空 = 工具不可用 (返回明确错误)
       base:   env.MINIMAX_BASE || 'https://api.minimaxi.com',
-      timeoutMs: int(env.MINIMAX_IMAGE_TIMEOUT_MS, 60000),
+      timeoutMs: int(env.MINIMAX_IMAGE_TIMEOUT_MS, 120000),
     },
 
     // —— 联网 (web_search / fetch_url / gold_price, 走代理) ——

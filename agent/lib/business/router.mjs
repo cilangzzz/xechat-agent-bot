@@ -502,7 +502,7 @@ export class Router {
     const owner = from;
     const ownerPrefix = `/${owner}的${species}`;
     const botName = `${owner}的${species}`;
-    const logFile = path.join(a.agentDir, `dedicated_${owner}.log`);
+    const logFile = path.join(a.agentDir, 'log', `dedicated_${owner}.log`);
     const env = {
       ...process.env,
       BOT_USERNAME: botName,

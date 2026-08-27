@@ -30,14 +30,14 @@ const ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16', '21:8'
  * @param {object} opts
  * @param {string} [opts.apiKey]      Bearer token (MINIMAX_API_KEY)
  * @param {string} [opts.base]        API 前缀, 默认 https://api.minimaxi.com
- * @param {number} [opts.timeoutMs]   请求超时(毫秒), 默认 60s
+ * @param {number} [opts.timeoutMs]   请求超时(毫秒), 默认 120s (生成耗时波动较大, 20-90s 常见)
  * @param {object} [opts.proxy]       预留: 未来可接入代理 (当前 MiniMax 国内直连, 未使用)
  * @param {function} [opts.log]       日志
  */
 export function createImageGenerator(opts = {}) {
   const apiKey = opts.apiKey || '';
   const base = (opts.base || DEFAULT_BASE).replace(/\/+$/, '');
-  const timeoutMs = Number(opts.timeoutMs) || 60000;
+  const timeoutMs = Number(opts.timeoutMs) || 120000;
   const log = opts.log || (() => {});
 
   return {

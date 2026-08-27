@@ -73,7 +73,7 @@ export function buildPlatformTools(ctx) {
 **核心语义**: 传 **content(内容)**,不是 file_path(本地路径)。图片/二进制先 base64 编码再传 is_binary=true;文本直接传 UTF-8。
 
 **何时使用**
-- LLM 生成截图/图表(PNG/JPG, base64 后传) → 拿 view_url 回贴聊天
+- LLM 生成截图/图表(PNG/JPG, base64 后传) → 拿 markdown 字段贴聊天(见下)
 - LLM 整理的长内容 / 代码片段 / 数据 → 上传后给下载链接
 - 用户说"发我一份文件/把刚才整理成文件"
 
@@ -82,7 +82,9 @@ export function buildPlatformTools(ctx) {
 - 私密文件(密码/密钥/.env/chat-log.jsonl 等) → 反向约束, 不要上传
 - 没配 XECHAT_API_USERNAME/PASSWORD(管理员需在 .env 填)
 
-**返回**:{id, fileName, filePath, fileSize, mimeType, bizType, md5, view_url, download_url} 或 {error}`,
+**返回**:
+- 图片(is_binary=true + 图片 MIME): {success, view_url, markdown, ...} — **把 markdown 字段(如 \`![图片](https://...)\`)原样发到聊天**, 鱼塘 webview 会内联渲染图片, 不要自己再构造 <a href> 或别的格式
+- 文本/其它: {success, view_url, download_url, link, ...} — 把 link 字段(\`[filename](download_url)\`)发到聊天, 用户点下载`,
       parameters: {
         type: 'object',
         properties: {
@@ -98,19 +100,50 @@ export function buildPlatformTools(ctx) {
       run: async ({ content, filename, is_binary, bizType, mime_type }, extra) => {
         const api = ctx.api;
         if (!api) return { error: 'XechatApi 未注入(tools.mjs ctx.api)' };
+        let r;
         try {
-          const r = await api.uploadFile({
+          r = await api.uploadFile({
             content: String(content || ''),
             filename: String(filename),
             isBinary: !!is_binary,
             bizType: bizType || 'user_avatar',
             mimeType: mime_type || undefined,
           });
-          return { success: true, ...r };
         } catch (e) {
           return { error: '上传失败: ' + (e.message || e) };
         }
+        const isImage = !!(is_binary && (
+          /^image\//.test(mime_type || '')
+          || /^image\//.test(r.mimeType || '')
+          || /^image\//.test(guessMime(filename))
+        ));
+        const fn = String(filename || '');
+        if (isImage && r.view_url) {
+          return {
+            success: true,
+            ...r,
+            markdown: `![${fn}](${r.view_url})`,   // 预格式化的 markdown 图片, LLM 原样发到聊天
+            link: `[${fn}](${r.view_url})`,
+            render_hint: 'image',
+          };
+        }
+        return {
+          success: true,
+          ...r,
+          link: `[${fn}](${r.download_url || r.view_url})`,  // 非图片用 markdown 链接
+          render_hint: 'file',
+        };
       },
     }),
   ];
+}
+
+// 简易 MIME 探测 (与 sendup.mjs 同款, 避免循环依赖)
+const MIME_BY_EXT = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
+};
+function guessMime(filename) {
+  const m = /\.([a-z0-9]+)$/i.exec(String(filename || ''));
+  return (m && MIME_BY_EXT['.' + m[1].toLowerCase()]) || '';
 }
