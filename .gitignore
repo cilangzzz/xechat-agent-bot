@@ -141,3 +141,17 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# ============================================================
+# 本项目专属 —— 不入库的运行产物 / 密钥 / 数据
+# ============================================================
+
+# xechat-bot 整个目录不入库 (线上代码的本地快照, 由运行进程维护, 不进版本控制)
+xechat-bot/
+
+# agent 运行时数据 (chat-log.jsonl / memory.json / schedule.json / adopted.json 等)
+# (agent/.gitignore 已覆盖 data/, 这里再加显式声明做兜底)
+agent/data/
+
+# 任何路径下的本地密钥文件 (防御性冗余 —— 根 .gitignore 的 .env / .env.* 已覆盖)
+# 取消注释下两行可做硬性兜底: **/.env **/.env.*

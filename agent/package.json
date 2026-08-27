@@ -1,0 +1,14 @@
+{
+  "name": "yutang-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "鱼塘(Xechat) agent 智能体骨架 —— 由 /小黄鱼 bot 升级而来",
+  "scripts": {
+    "start": "node agent.mjs",
+    "test": "node test/unit-agent.mjs && node test/run-e2e.mjs",
+    "test:unit": "node test/unit-agent.mjs",
+    "test:e2e": "node test/run-e2e.mjs"
+  },
+  "engines": { "node": ">=18" }
+}
