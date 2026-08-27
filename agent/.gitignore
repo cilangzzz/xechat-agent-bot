@@ -5,3 +5,4 @@ node_modules/
 adopted.json
 dedicated_*.log
 data/
+log/

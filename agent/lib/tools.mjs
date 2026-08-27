@@ -162,6 +162,21 @@ export function createRegistry(registryCtx = {}) {
       return { count: 0, ranking: await ctx.api.leaderboard({ gameInfoId, limit }) };
     },
   }));
+  reg.register(defineTool({
+    id: 'server_list',
+    description: '查询鱼塘平台当前启用的服务器(鱼塘)列表: 名称/地址(ip)/端口/版本。用户问"有哪些鱼塘/几个鱼塘/怎么连鱼塘"时用。',
+    parameters: { type: 'object', properties: {} },
+    run: async () => {
+      const list = await ctx.api.serverList();
+      return {
+        total: list.length,
+        servers: list.map((s) => ({
+          name: s.name, ip: s.ip, port: s.port, version: s.version,
+          enabled: s.enabled, remark: s.remark,
+        })),
+      };
+    },
+  }));
 
   // —— 游戏房间 (CREATE_GAME_ROOM / GAME_ROOM 协议, 走 WS 客户端) ——
   // 中文/英文别名 → Java 服务端 Game 枚举名(对齐 xechat-commons/.../Game.java)

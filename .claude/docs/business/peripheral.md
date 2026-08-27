@@ -435,6 +435,7 @@ Node 原生 fetch 不支持 HTTP 代理, 鱼塘外网必须走代理 (7897)。�
 | `gameList({size=20, keyword=''})` | `async → Array` | `POST /api/gameInfo/list`; `keyword` 模糊匹配 `gameName/gameNameZhCn/description` |
 | `gameDetail(idOrName)` | `async → Object` | `GET /api/gameInfo/detail/<id>` (id) 或 `GET /api/gameInfo/<name>` (名) |
 | `leaderboard({gameInfoId, rankKey='score', limit=10})` | `async → Array` | `POST /api/leaderboard/ranking`; 返回 `[{rank, username, score, nickname?}]` |
+| `serverList()` | `async → Array` | `GET /api/server/list`; 返回 `[{id, name, ip, port, version, status, enabled, sort, remark}]` |
 | `_req(method, path, body)` | 内部 | 带 AbortController 超时; 业务码 `code !== 200` 抛错 |
 
 ### 配置项
@@ -457,6 +458,8 @@ Node 原生 fetch 不支持 HTTP 代理, 鱼塘外网必须走代理 (7897)。�
 `gameDetail` 返回附加: `description, downloadUrl, updateTime`。
 
 `leaderboard` 返回每项: `{rank (1 起), username, score, nickname?}`. 字段名兼容 `username/userName/playerName`, `score/value/rankValue`.
+
+`serverList` 返回每项: `{id, name, ip, port, version, status, enabled (status===1), sort, remark}`.
 
 ### 坑点
 

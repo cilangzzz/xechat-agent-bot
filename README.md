@@ -25,8 +25,13 @@ xechat-agent-bot/
 │   ├── .env.example           #   环境变量模板
 │   ├── lib/                   #   19 个 lib 模块 (ws-client / llm / router / tools / ...)
 │   └── test/                  #   单元 + 端到端 + 真实环境验证
-├── api/                       # 鱼塘平台 API 参考 (OpenAPI 3.0.1, 70 端点)
-│   └── manager-api-docs.json  #   OpenAPI 原始文档 (标题 "Xechat Manager API")
+├── api/                       # 鱼塘平台 API 参考 (管理端 HTTP + WS 协议 + 辅助服务)
+│   ├── README.md              #   api 目录索引 (文件清单 / 关键约定 / 使用指引)
+│   ├── manager-api-docs.json  #   管理端 HTTP API OpenAPI 原始文档 (标题 "Xechat Manager API", 70 端点)
+│   ├── ws-protocol.md         #   WebSocket 聊天协议参考 (核心, agent 依赖)
+│   ├── game-protocol.md       #   游戏房间 / 各游戏 DTO 协议参考
+│   ├── http-api.md            #   聊天服务器 HTTP 端点 (GET /download/{fileName})
+│   └── aux-services.md        #   辅助服务 (天气/翻译/IP/服务器列表/配置)
 └── .claude/                   # LLM 友好文档体系 (本项目分层文档)
     ├── CLAUDE.md              #   主索引 (始终加载到上下文)
     └── docs/                  #   分类文档 (按需加载)

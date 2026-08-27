@@ -32,7 +32,7 @@
 | POST | /api/server | 游戏 | 新增服务器 | |
 | POST | /api/server/update | 游戏 | 修改服务器 | |
 | POST | /api/server/page | 游戏 | 服务器分页查询 | |
-| GET | /api/server/list | 游戏 | 启用中的服务器列表 (公开) | |
+| GET | /api/server/list | 游戏 | 启用中的服务器列表 (公开) | ✅ (xechat-api.serverList) |
 | DELETE | /api/server/{id} | 游戏 | 删除服务器 (逻辑) | |
 
 ## 用户 / 角色 / 菜单 (18)
@@ -116,5 +116,5 @@
 ## 备注
 
 - 4 个路径各含两个方法: `/gameInfo/{gameName}`、`/gameInfo/history/{id}`、`/deployHistory/{id}`、`/category/{id}` (均为 GET + DELETE)。
-- ✅ 标记仅 4 个: `gameList` → `/api/gameInfo/list`; `gameDetail` → `/api/gameInfo/detail/{id}` 与 `/api/gameInfo/{gameName}`; `leaderboard` → `/api/leaderboard/ranking`。
+- ✅ 标记仅 5 个: `gameList` → `/api/gameInfo/list`; `gameDetail` → `/api/gameInfo/detail/{id}` 与 `/api/gameInfo/{gameName}`; `leaderboard` → `/api/leaderboard/ranking`; `serverList` → `/api/server/list`。
 - 创建/关闭/列出游戏房间 (`create_room` / `close_room` / `list_rooms`) 走 WS 协议 (`CREATE_GAME_ROOM` / `GAME_ROOM`), **不在**本 HTTP API 中。

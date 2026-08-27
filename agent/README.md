@@ -95,6 +95,7 @@ agent/
 - `create_room` — 在鱼塘创建游戏房间(走 WS `CREATE_GAME_ROOM`)
 - `close_room` — 关闭鱼塘游戏房间(走 WS `GAME_ROOM`/`ROOM_CLOSE`)
 - `list_rooms` — 列出当前活动的鱼塘游戏房间(总数/按游戏分组/列表)
+- `server_list` — 查询鱼塘平台启用中的服务器列表(名称/地址/端口/版本)
 - `schedule` — 注册一次性定时任务(相对 `inMinutes` / 绝对 `atTime`;`remind` 到点发提醒 / `auto` 到点自动生成)
 - `list_schedules` — 查看未到期的定时任务
 - `recent_messages` — 查看当前会话最近收到的聊天消息(仅连接后,不含历史,内存)

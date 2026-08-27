@@ -4,12 +4,16 @@
 // 运行:  node test/run-e2e.mjs
 // 期望输出: 全部断言通过 → "E2E PASS"
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MockPondServer } from './mock-server.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = path.join(__dirname, '..');
+const CHAT_LOG_FILE = path.join(__dirname, 'e2e-chat-log.jsonl');
+// 每次运行前重置聊天记录日志: 避免提交的 fixture 累积旧数据, 让场景M的断言读到的始终是本轮的最近N条
+try { fs.writeFileSync(CHAT_LOG_FILE, ''); } catch (e) {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -41,7 +45,7 @@ async function main() {
     // —— 新增功能测试配置: 定时任务加速 + 聊天记录日志(落盘临时文件); 触发器另起独立 agent 实例测 ——
     SCHEDULE_TICK_MS: '200',
     ENABLE_CHAT_LOG: '1',
-    CHAT_LOG_FILE: path.join(__dirname, 'e2e-chat-log.jsonl'),
+    CHAT_LOG_FILE,
   };
   let child = spawn(process.execPath, ['agent.mjs'], {
     cwd: AGENT_DIR,

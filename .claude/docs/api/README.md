@@ -10,7 +10,7 @@
 | 项 | 说明 |
 |---|---|
 | 文档源 | [`api/manager-api-docs.json`](../../../api/manager-api-docs.json) — OpenAPI 3.0.1, 标题 "Xechat Manager API" v1.0.0, **70 个路径 (74 个方法)**, 未声明 security scheme |
-| 实际客户端 | [`agent/lib/xechat-api.mjs`](../../../agent/lib/xechat-api.mjs) — `XechatApi` 类 (87 行), 基址 `https://dld.lesscoding.net` + `/api/`, 无鉴权 |
+| 实际客户端 | [`agent/lib/xechat-api.mjs`](../../../agent/lib/xechat-api.mjs) — `XechatApi` 类 (104 行), 基址 `https://dld.lesscoding.net` + `/api/`, 无鉴权 |
 | 响应约定 | HTTP 200 + body `{ code: 200, data: ... }` 才算成功, 否则 `_req` 抛错 (`HTTP <status>` 或 `业务码 <code>`) |
 
 客户端三个方法对应关系:
@@ -20,6 +20,7 @@
 | `api.gameList({size, keyword})` | `POST /api/gameInfo/list` | 游戏列表 (分页, keyword 本地模糊过滤), 映射出 `id/name/zhName/version/status/online/playUrl/categories/fileSize` |
 | `api.gameDetail(idOrName)` | `GET /api/gameInfo/detail/{id}` 或 `GET /api/gameInfo/{gameName}` | 游戏详情 (按 id 或英文名; 中文名/描述编码正常) |
 | `api.leaderboard({gameInfoId, rankKey, limit})` | `POST /api/leaderboard/ranking` | 排行榜查询, 归一化为 `rank/username/score[/nickname]` |
+| `api.serverList()` | `GET /api/server/list` | 鱼塘服务器列表 (公开), 映射出 `id/name/ip/port/version/status/enabled/sort/remark` |
 
 ## 2. 项目内如何调用
 
@@ -28,12 +29,13 @@
 | `games` | HTTP (`XechatApi`) | `POST /api/gameInfo/list` → `gameList()` |
 | `game_detail` | HTTP (`XechatApi`) | `GET /api/gameInfo/detail/{id}` 或 `/api/gameInfo/{gameName}` → `gameDetail()` |
 | `leaderboard` | HTTP (`XechatApi`) | `POST /api/leaderboard/ranking` → `leaderboard()` |
+| `server_list` | HTTP (`XechatApi`) | `GET /api/server/list` → `serverList()` |
 | `create_room` | **WS 协议** | `CREATE_GAME_ROOM` action, 不经过 Manager HTTP API |
 | `close_room` | **WS 协议** | `GAME_ROOM` action, 不经过 Manager HTTP API |
 | `list_rooms` | **WS 协议** | `GAME_ROOM` action, 不经过 Manager HTTP API |
 
 要点:
-- **查询类** (游戏/详情/排行) 走 HTTP `XechatApi` —— 公共只读接口, 无需登录, `ctx.api` 在 `tools.mjs` 中注入;
+- **查询类** (游戏/详情/排行/服务器列表) 走 HTTP `XechatApi` —— 公共只读接口, 无需登录, `ctx.api` 在 `tools.mjs` 中注入;
 - **房间类** (`create_room` / `close_room` / `list_rooms`) 走 WebSocket 的 `CREATE_GAME_ROOM` / `GAME_ROOM` action, 与本 HTTP API 无关;
 - 注册 / 登录 (`/api/user/register` `/api/user/login`) 存在但当前客户端**未封装**。
 
@@ -62,6 +64,8 @@
 
 - 端点摘要: [endpoints-summary.md](./endpoints-summary.md)
 - OpenAPI 原始文档: [`api/manager-api-docs.json`](../../../api/manager-api-docs.json)
+- api 目录索引 (含 WS 协议 / 游戏协议 / HTTP 端点 / 辅助服务): [`api/README.md`](../../../api/README.md)
+- WebSocket 聊天协议 (房间走 WS 协议 `CREATE_GAME_ROOM` / `GAME_ROOM`, **不在**本 HTTP API): [`api/ws-protocol.md`](../../../api/ws-protocol.md)
 - 客户端实现: [`agent/lib/xechat-api.mjs`](../../../agent/lib/xechat-api.mjs)
 - 工具注册: [`agent/lib/tools.mjs`](../../../agent/lib/tools.mjs) (116 行起, "鱼塘平台功能查询")
 - WS 房间协议 (非本 API): [`agent/lib/ws-client.mjs`](../../../agent/lib/ws-client.mjs)

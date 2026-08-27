@@ -83,6 +83,9 @@
 | 资源 | 说明 | 文档 |
 |---|---|---|
 | [api/manager-api-docs.json](api/manager-api-docs.json) | Xechat Manager API OpenAPI (70 端点) | [README](.claude/docs/api/README.md) |
+| [api/ws-protocol.md](api/ws-protocol.md) | WebSocket 聊天协议参考 (agent 核心协议) | [README](api/README.md) |
+| [api/game-protocol.md](api/game-protocol.md) | 游戏房间 / 各游戏 DTO 协议 | [README](api/README.md) |
+| [api/http-api.md](api/http-api.md) / [api/aux-services.md](api/aux-services.md) | 聊天服务器 HTTP 端点 / 辅助服务 | [README](api/README.md) |
 | `.env.example` | 配置模板 | [README](.claude/docs/config/README.md) |
 
 ## 4. 快速命令

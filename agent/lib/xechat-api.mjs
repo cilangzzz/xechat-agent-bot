@@ -84,4 +84,21 @@ export class XechatApi {
       ...(r.nickname ? { nickname: r.nickname } : {}),
     }));
   }
+
+  /** 鱼塘服务器列表 (GET /api/server/list, 公开接口), 返回启用中的鱼塘服务器(名称/地址/端口/版本) */
+  async serverList() {
+    const data = await this._req('GET', '/api/server/list');
+    const list = Array.isArray(data) ? data : (data && data.records) || [];
+    return list.map((r) => ({
+      id: r.id,
+      name: r.name,
+      ip: r.ip,
+      port: r.port,
+      version: r.version,
+      status: r.status,
+      enabled: r.status === 1, // 1 = 启用中
+      sort: r.sort,
+      remark: r.remark,
+    }));
+  }
 }
