@@ -1,7 +1,7 @@
 # 鱼塘 Manager API 参考 (Xechat Manager API)
 
 > **⚠️ 基址前缀陷阱**
-> OpenAPI 文档 `api/api-docs.json` 的 `servers[0].url` 写的是 `http://dld.lesscoding.net/xeManager` —— **`/xeManager` 前缀实际未部署**。
+> OpenAPI 文档 `api/manager-api-docs.json` 的 `servers[0].url` 写的是 `http://dld.lesscoding.net/xeManager` —— **`/xeManager` 前缀实际未部署**。
 > 真实可用的基址是 **`https://dld.lesscoding.net/api/`**。本页所有路径请按 `/api/...` 前缀使用, 不要用文档里的 `/xeManager`。
 > 客户端 `agent/lib/xechat-api.mjs` 已按 `/api/` 前缀写死, 直接可用。
 
@@ -9,7 +9,7 @@
 
 | 项 | 说明 |
 |---|---|
-| 文档源 | [`api/api-docs.json`](../../../api/api-docs.json) — OpenAPI 3.0.1, 标题 "Xechat Manager API" v1.0.0, **70 个路径 (74 个方法)**, 未声明 security scheme |
+| 文档源 | [`api/manager-api-docs.json`](../../../api/manager-api-docs.json) — OpenAPI 3.0.1, 标题 "Xechat Manager API" v1.0.0, **70 个路径 (74 个方法)**, 未声明 security scheme |
 | 实际客户端 | [`agent/lib/xechat-api.mjs`](../../../agent/lib/xechat-api.mjs) — `XechatApi` 类 (87 行), 基址 `https://dld.lesscoding.net` + `/api/`, 无鉴权 |
 | 响应约定 | HTTP 200 + body `{ code: 200, data: ... }` 才算成功, 否则 `_req` 抛错 (`HTTP <status>` 或 `业务码 <code>`) |
 
@@ -61,7 +61,7 @@
 ## 5. 相关文件
 
 - 端点摘要: [endpoints-summary.md](./endpoints-summary.md)
-- OpenAPI 原始文档: [`api/api-docs.json`](../../../api/api-docs.json)
+- OpenAPI 原始文档: [`api/manager-api-docs.json`](../../../api/manager-api-docs.json)
 - 客户端实现: [`agent/lib/xechat-api.mjs`](../../../agent/lib/xechat-api.mjs)
 - 工具注册: [`agent/lib/tools.mjs`](../../../agent/lib/tools.mjs) (116 行起, "鱼塘平台功能查询")
 - WS 房间协议 (非本 API): [`agent/lib/ws-client.mjs`](../../../agent/lib/ws-client.mjs)

@@ -82,7 +82,7 @@
 
 | 资源 | 说明 | 文档 |
 |---|---|---|
-| [api/api-docs.json](api/api-docs.json) | Xechat Manager API OpenAPI (70 端点) | [README](.claude/docs/api/README.md) |
+| [api/manager-api-docs.json](api/manager-api-docs.json) | Xechat Manager API OpenAPI (70 端点) | [README](.claude/docs/api/README.md) |
 | `.env.example` | 配置模板 | [README](.claude/docs/config/README.md) |
 
 ## 4. 快速命令

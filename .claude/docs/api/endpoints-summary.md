@@ -1,6 +1,6 @@
 # 鱼塘 Manager API — 端点摘要 (70 路径 / 74 方法)
 
-来源 `api/api-docs.json` (OpenAPI 3.0.1)。基址为 `https://dld.lesscoding.net/api/` (文档里的 `/xeManager` 未部署, 见 [README.md](./README.md))。
+来源 `api/manager-api-docs.json` (OpenAPI 3.0.1)。基址为 `https://dld.lesscoding.net/api/` (文档里的 `/xeManager` 未部署, 见 [README.md](./README.md))。
 `实际被调用?` 列标记 ✅ = 被 `agent/lib/xechat-api.mjs` 实际调用 (仅 4 个只读查询端点); 其余端点当前 agent 均未使用。
 
 ## 游戏管理 (27)
@@ -109,7 +109,7 @@
 
 ## 其它文件
 
-- `api/api-docs.json` — OpenAPI 3.0.1 原始文档 (上述所有端点的唯一来源)。
+- `api/manager-api-docs.json` — OpenAPI 3.0.1 原始文档 (上述所有端点的唯一来源)。
 - `api/register_batch.py` — 批量注册测试脚本 (**不在项目核心流程**; 当前仓库中未发现该文件, 可能已被清理)。
 - `api/register_1000.jsonl` / `api/register_100k.jsonl` / `api/smoke_test.jsonl` — 批量注册 / 冒烟测试结果数据 (同上, 当前仓库中未发现)。
 

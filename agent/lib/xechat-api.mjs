@@ -1,7 +1,7 @@
 // 鱼塘 agent 智能体 —— Xechat 平台 API 客户端
 // 查询鱼塘(lesscoding.net)常用功能: 游戏列表 / 游戏详情 / 排行榜。
 // 客户端 API 基址: https://dld.lesscoding.net/api/ (无需鉴权, 与注册接口同前缀;
-// 注意: api-docs.json 里写的 /xeManager 前缀实际未部署, 真实可用的是 /api/)。
+// 注意: manager-api-docs.json 里写的 /xeManager 前缀实际未部署, 真实可用的是 /api/)。
 // fetchFn 可注入, 便于离线测试(不产生真实外网流量)。
 export class XechatApi {
   constructor({ base = 'https://dld.lesscoding.net', timeoutMs = 12000, fetchFn, log = () => {} } = {}) {

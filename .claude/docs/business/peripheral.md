@@ -464,7 +464,7 @@ Node 原生 fetch 不支持 HTTP 代理, 鱼塘外网必须走代理 (7897)。�
 2. **`fetchFn` 注入** —— 测试用, 但需自行模拟 `{ok, json()}` 接口形态。
 3. **`gameDetail` 中文名编码** —— `/api/gameInfo/<name>` 此接口中文描述编码正常, 但 list 接口里中文字段可能需客户端处理。
 4. **leaderboard 字段名多版本** —— username 兼容 `userName/playerName`; score 兼容 `value/rankValue`; 缺字段默认 `'?'`/`null`。
-5. **`/xeManager` 路径不可用** —— OpenAPI 文档 (`api/api-docs.json`) 写的 `xeManager` 前缀实际未部署, 必须用 `/api/`。
+5. **`/xeManager` 路径不可用** —— OpenAPI 文档 (`api/manager-api-docs.json`) 写的 `xeManager` 前缀实际未部署, 必须用 `/api/`。
 6. **没鉴权** —— 公开数据可查; 涉及用户隐私/写操作的接口不在此模块, 需另走 WS 协议。
 
 ---
