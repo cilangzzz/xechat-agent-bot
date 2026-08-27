@@ -91,6 +91,8 @@ export class Router {
       roomLog: this.cfg.roomLog,          // 聊天记录上限配置 (recent_messages 工具)
       chatLog: deps.chatLog || null,      // 聊天记录日志 (chat_log 工具)
       sendup: deps.sendup || null,        // 文件分享 (send_file 工具)
+      host: deps.cfg && deps.cfg.host,    // 当前鱼塘主机/端口 (probe_pond 防自探测护栏)
+      port: deps.cfg && deps.cfg.port,
     });
 
     this._summarize = null; // 摘要函数 (bindLlm 时注入)

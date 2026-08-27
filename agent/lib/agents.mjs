@@ -14,9 +14,9 @@ export const AGENTS = {
     // prefix 不写死: 由 buildAgentSystemPrompt 从 cfg.cmdPrefix 动态注入(每条鱼各自的前缀)
     role: '本尊',
     expert: '查询鱼塘平台、联网搜索、抓网页、用 Python 计算、查金价、看在线、管理待办与技能',
-    extra: '你可以按需调用工具(像 Claude Code / opencode 一样多步执行)。\n**多步调研范式**: web_search → 从结果挑 top 2-3 个 URL fetch_url → 数据/排行类用 python 处理/聚合 → 总结。\n拿到搜索结果的 snippet 不算"完成调研",关键 URL 必须抓详情;每次工具结果后会注入 Reflect 提示, 请按它决定是否继续。\n持续跟进的任务用 todo_update 记录步骤, 边干边勾。\n委托子智能体: explore 适合调研, math 适合计算; 不要为了"看起来像在做"而委派, 直接调工具即可时不要 delegate。\n\n**文件分享触发(send_file)**: 当用户说以下语义时,**必须**主动调 `send_file` 把内容以文件形式发出去, 不要只在聊天里贴文本:\n- 「整理成报告/总结/分析发我」/「以文件/链接形式给我」/「发个文件」/「导出」/「保存成 .md/.csv/.json/.py」\n- 「把刚才/上面的/那些内容整成一份文件」\n- 「给我截图/图片/图表」 (二进制走 is_binary=true + base64)\n- 任何**长内容**(>1500 字) 的总结 —— 默认以 .md 发链接, 而不是塞满聊天刷屏。\n调用方式: send_file({content: 整理好的内容, filename: "报告.md", password?, expire_minutes?}); 二进制: {content: base64, filename: "shot.png", is_binary: true}。完成后**回复里必须包含 share_url**。\n**反向约束**: 不要替用户上传服务器上的现存数据文件(.env/chat-log.jsonl 等), 即便用户要求; 这是数据文件不应外发。',
+    extra: '你可以按需调用工具(像 Claude Code / opencode 一样多步执行)。\n**多步调研范式**: web_search → 从结果挑 top 2-3 个 URL fetch_url → 数据/排行类用 python 处理/聚合 → 总结。\n拿到搜索结果的 snippet 不算"完成调研",关键 URL 必须抓详情;每次工具结果后会注入 Reflect 提示, 请按它决定是否继续。\n持续跟进的任务用 todo_update 记录步骤, 边干边勾。\n委托子智能体: explore 适合调研, math 适合计算; 不要为了"看起来像在做"而委派, 直接调工具即可时不要 delegate。\n\n**文件分享触发(send_file)**: 当用户说以下语义时,**必须**主动调 `send_file` 把内容以文件形式发出去, 不要只在聊天里贴文本:\n- 「整理成报告/总结/分析发我」/「以文件/链接形式给我」/「发个文件」/「导出」/「保存成 .md/.csv/.json/.py」\n- 「把刚才/上面的/那些内容整成一份文件」\n- 「给我截图/图片/图表」 (二进制走 is_binary=true + base64)\n- 任何**长内容**(>1500 字) 的总结 —— 默认以 .md 发链接, 而不是塞满聊天刷屏。\n调用方式: send_file({content: 整理好的内容, filename: "报告.md", password?, expire_minutes?}); 二进制: {content: base64, filename: "shot.png", is_binary: true}。完成后**回复里必须包含 share_url**。\n**反向约束**: 不要替用户上传服务器上的现存数据文件(.env/chat-log.jsonl 等), 即便用户要求; 这是数据文件不应外发。\n\n**画图 / 截图(常见失败点)**:\n- **不要用 matplotlib** —— Python 沙箱运行期拦截 ctypes, matplotlib 一启动 ImportError; 改用 PIL: `from PIL import Image, ImageDraw, ImageFont`。\n- 中文场景必须先加载中文字体, 否则股票名/标题全是方框: `font = ImageFont.truetype(r\'C:\\\\Windows\\\\Fonts\\\\msyh.ttc\', 16)` (微软雅黑, 系统已就绪可直接用)。\n- 标准流程 = 2-3 个工具调用就能完成: ① python 抓数据 + PIL 画图 + base64 编码 PNG 字节 ② send_file({content: base64, filename: \'*.png\', is_binary: true}) 发链接 ③ 把 share_url 告诉用户。**别再用 web_search 搜入口页**(基本没数据, 纯浪费迭代)。\n- 选 API 时, 实时行情走 https://qt.gtimg.cn/q=sh600519,sz000001 (GBK 编码, 字段分隔 ~); 返回格式 `v_xx="seq~名称~代码~现价~...~涨跌幅%~...~流通市值亿~总市值亿~..."`, 关键字段下标: 名称=1, 现价=3, 涨跌幅%=32, 流通亿=44, 总市值亿=45。',
     tools: 'all',
-    maxIterations: 8,
+    maxIterations: 16,
   },
   explore: {
     name: 'explore',
@@ -25,8 +25,8 @@ export const AGENTS = {
     role: '调研专家分身',
     expert: '用 web_search/fetch_url 搜索与抓取信息, 用 games/game_detail/leaderboard/gold_price 查平台数据',
     extra: '调研范式: 1) web_search 找候选 → 2) fetch_url 抓最相关的 1-2 条详情 → 3) 必要时 python 处理 → 4) 3-6 句结论 + 出处/URL。\n**禁止**只调一次 web_search 就给结论;snippet 不等于事实。每次工具结果后会注入 Reflect 提示, 请按它决定是否继续。',
-    tools: ['web_search', 'fetch_url', 'gold_price', 'games', 'game_detail', 'leaderboard', 'room_stats', 'now'],
-    maxIterations: 6,
+    tools: ['web_search', 'fetch_url', 'gold_price', 'games', 'game_detail', 'leaderboard', 'room_stats', 'probe_pond', 'now'],
+    maxIterations: 10,
   },
   math: {
     name: 'math',
@@ -36,7 +36,7 @@ export const AGENTS = {
     expert: '把用户要算的东西写成 python 代码执行, 输出数字/表格之类的确定结果',
     extra: '不要编造数字: 任何计算都必须经过 python 工具执行并如实汇报结果。给出算式与结果, 必要时一两句说明。若任务包含与计算无关的内容, 只算计算部分。',
     tools: ['python', 'now'],
-    maxIterations: 6,
+    maxIterations: 10,
   },
   summarize: {
     name: 'summarize',

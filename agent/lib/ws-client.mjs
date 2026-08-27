@@ -131,9 +131,9 @@ export class WsClient {
     this.sock.write(encodeClientText(text));
   }
 
-  /** 主动断开 (不触发自动重连语义, 由外层接管) */
+  /** 主动断开 (不触发自动重连语义, 由外层接管); 连接已结束时为 no-op */
   stop() {
-    this._finish('stopped');
+    if (typeof this._finish === 'function') this._finish('stopped');
   }
 
   /** 一次连接生命周期: 连接→握手→登录→监听, resolve(退出原因) */
@@ -169,8 +169,10 @@ export class WsClient {
         try { sock.destroy(); } catch (e) {}
         this.sock = null;
         this._runResolve = null;
+        this._finish = null; // 连接已结束, stop() 变为 no-op
         resolve(why);
       };
+      this._finish = finish; // 暴露给 stop(), 供外部主动断开
 
       const doWsHandshake = () => {
         const key = crypto.randomBytes(16).toString('base64');

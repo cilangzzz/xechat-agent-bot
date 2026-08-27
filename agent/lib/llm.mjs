@@ -48,6 +48,9 @@ export function createLlm(cfg, log = () => {}) {
     return await req('/chat/completions', {
       model, messages, max_tokens: maxTokens, temperature,
       ...(tools && tools.length ? { tools, tool_choice: 'auto' } : {}),
+      // 默认关掉 deepseek 的内部思考模式: 避免 reasoning_content 把 max_tokens 耗光, 留下空 content/tool_calls
+      // (flash/推理变体常默认开, 关闭后模型直接产出最终回复, 单次 token 占用大幅下降)
+      thinking: { type: 'disabled' },
     });
   }
 
