@@ -1,7 +1,7 @@
 // 跨鱼塘探测 CLI (诊断/验证用): 复用 lib/pond-probe.mjs 的 probePond
 // 用法: node probe-pond.mjs <host> [port] [--proxy] [--history N]
 //   默认 port=33859, 默认直连; --proxy 走 127.0.0.1:7897
-import { probePond } from './lib/pond-probe.mjs';
+import { probePond } from './lib/platform/pond-probe.mjs';
 
 const host = process.argv[2];
 if (!host) { console.log('用法: node probe-pond.mjs <host> [port] [--proxy] [--history N]'); process.exit(1); }

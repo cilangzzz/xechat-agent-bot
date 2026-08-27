@@ -52,10 +52,16 @@ export function loadConfig(env = process.env) {
     showThinking: !bool(env.HIDE_THINKING),      // HIDE_THINKING=1 则不在聊天里展示思考结果
     thinkingPrefix: env.THINKING_PREFIX || '💭', // 思考结果消息前缀, 便于与正式回答区分
 
-    // —— Xechat 平台 API (游戏/排行榜查询) ——
+    // —— Xechat 平台 API (游戏/排行榜/服务器/上传) ——
     api: {
       base: env.XE_API_BASE || 'https://dld.lesscoding.net',
       timeoutMs: int(env.XE_API_TIMEOUT_MS, 12000),
+      // —— 鉴权 + 文件上传 (upload_image 工具, 需登录) ——
+      username: env.XECHAT_API_USERNAME || '',
+      password: env.XECHAT_API_PASSWORD || '',
+      authPath: env.XE_API_AUTH_PATH || '/api/user/login',
+      uploadPath: env.XE_API_UPLOAD_PATH || '/api/file/upload',
+      maxUploadBytes: int(env.XE_API_MAX_UPLOAD_BYTES, 50 * 1024 * 1024),
     },
 
     // —— 多智能体 (参考 opencode 的 agent 定义: 每 agent 独立提示词+工具白名单) ——
@@ -159,6 +165,14 @@ export function loadConfig(env = process.env) {
       timeoutMs: int(env.PYTHON_TIMEOUT_MS, 15000),
     },
 
+    // —— MiniMax 图片生成 (generate_image 工具, 文生图/图生图) ——
+    // 参考 H:\Documents\software-dev-ai-workflow\0.0-通用skill\docs-minimax-docs\图片生成.md
+    minimaxImage: {
+      apiKey: env.MINIMAX_API_KEY || '',          // 留空 = 工具不可用 (返回明确错误)
+      base:   env.MINIMAX_BASE || 'https://api.minimaxi.com',
+      timeoutMs: int(env.MINIMAX_IMAGE_TIMEOUT_MS, 60000),
+    },
+
     // —— 联网 (web_search / fetch_url / gold_price, 走代理) ——
     web: {
       enabled: !bool(env.DISABLE_WEB),  // DISABLE_WEB=1 关闭联网工具
@@ -168,6 +182,7 @@ export function loadConfig(env = process.env) {
     // —— 领养 (主 agent 拉起专属实例) ——
     adopt: {
       enabled: !bool(env.DISABLE_ADOPT),      // DISABLE_ADOPT=1 关闭领养
+      maxInstances: int(env.ADOPT_MAX_INSTANCES, 5),  // 同时在线的专属子实例上限 (含本进程已知的 + 在线用户里 *的<鱼种> 模式)
       nodeCmd: env.NODE_CMD || process.execPath,
       agentDir: env.AGENT_DIR || __dirname,
     },

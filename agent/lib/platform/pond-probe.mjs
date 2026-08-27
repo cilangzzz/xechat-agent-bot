@@ -3,7 +3,7 @@
 // → 抓 ONLINE_USERS(登录成功即被推送完整在线列表, 见 api/ws-protocol.md §5.3)
 // → 可选抓最近历史消息(HISTORY_MSG) → 立即断开。
 // 只读探测: 不发任何聊天消息, 拿完即走, 不打扰目标鱼塘。
-import { WsClient } from './ws-client.mjs';
+import { WsClient } from '../foundation/ws-client.mjs';
 
 const VISITOR_PREFIX = '巡塘员'; // 一次性访客昵称前缀(≤12 字符, 满足服务端昵称校验)
 

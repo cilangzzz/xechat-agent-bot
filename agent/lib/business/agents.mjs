@@ -4,7 +4,7 @@
 //   explore   — 调研子智能体: 联网搜索/抓取 + 平台查询, 返回简洁结论(类 opencode explore)。
 //   math      — 计算子智能体: 只用 python, 返回计算结果(类"数学/工具"专用代理)。
 //   summarize — 内部压缩用途(工具为空, 系统提示词 = 结构化摘要要求, 由 compaction 复用)。
-import { buildEnvironment, buildSystemPrompt } from './system.mjs';
+import { buildEnvironment, buildSystemPrompt } from '../foundation/system.mjs';
 
 export const AGENTS = {
   main: {

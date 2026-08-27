@@ -1,12 +1,12 @@
 // list_rooms 真实环境验证: 监听 GAME_ROOM_CREATED / ROOM_CLOSE 全服广播
 // 验证: 活动房间订阅能正确反映外部用户的房间创建/关闭
 // 用法: node test/verify-list-rooms.mjs [host] [port] [durationSec]
-import { WsClient } from '../lib/ws-client.mjs';
-import { createRegistry } from '../lib/tools.mjs';
-import { Router } from '../lib/router.mjs';
-import { SessionStore } from '../lib/sessions.mjs';
-import { XechatApi } from '../lib/xechat-api.mjs';
-import { createLlm } from '../lib/llm.mjs';
+import { WsClient } from '../lib/foundation/ws-client.mjs';
+import { createRegistry } from '../lib/business/tools/index.mjs';
+import { Router } from '../lib/business/router.mjs';
+import { SessionStore } from '../lib/business/sessions.mjs';
+import { XechatApi } from '../lib/platform/xechat-api.mjs';
+import { createLlm } from '../lib/foundation/llm.mjs';
 
 const HOST = process.argv[2] || 'lesscoding.net';
 const PORT = parseInt(process.argv[3] || '33859', 10);

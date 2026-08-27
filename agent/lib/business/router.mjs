@@ -6,10 +6,11 @@
 // 引入: 命令注册表(builtin)、子智能体委托通道、结构化压缩集成、待办/记忆/技能指令。
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { createRegistry } from './tools.mjs';
+import { createRegistry } from './tools/index.mjs';
 import { getAgent, buildAgentSystemPrompt, resolveToolNames } from './agents.mjs';
-import { buildEnvironment, buildSystemPrompt } from './system.mjs';
-import { summarizeWithLlm } from './compaction.mjs';
+import { buildEnvironment, buildSystemPrompt } from '../foundation/system.mjs';
+import { summarizeWithLlm } from '../foundation/compaction.mjs';
+import { SubagentDelegate } from './subagent.mjs';
 import * as todoHelpers from './todo.mjs';
 import { listSkills } from './skills.mjs';
 import * as schedMod from './scheduler.mjs';
@@ -74,6 +75,9 @@ export class Router {
     this._curUser = null;
     this._lastThink = null;
 
+    // 子智能体委托通道 (委托逻辑在 subagent.mjs)
+    this.subagent = new SubagentDelegate(this);
+
     this.tools = createRegistry({
       startTime: deps.startTime,
       sessions: this.sessions,
@@ -91,6 +95,7 @@ export class Router {
       roomLog: this.cfg.roomLog,          // 聊天记录上限配置 (recent_messages 工具)
       chatLog: deps.chatLog || null,      // 聊天记录日志 (chat_log 工具)
       sendup: deps.sendup || null,        // 文件分享 (send_file 工具)
+      minimaxImage: deps.minimaxImage || null, // MiniMax 图片生成 (generate_image 工具)
       host: deps.cfg && deps.cfg.host,    // 当前鱼塘主机/端口 (probe_pond 防自探测护栏)
       port: deps.cfg && deps.cfg.port,
     });
@@ -129,7 +134,7 @@ export class Router {
         return `今日金价: 国际 ${r.usdPerOz} 美元/盎司 | 人民币 ${r.cnyPerOz} 元/盎司 ≈ ${r.cnyPerGram} 元/克 (更新于 ${r.updatedAt})`;
       },
       // —— 多智能体显式指令 ——
-      explore: async (arg, { from }) => this._runSubdirect('explore', arg, from),
+      explore: async (arg, { from }) => this.subagent._runSubdirect('explore', arg, from),
       math: async (arg, { from }) => this._safeMath(arg, from),
       // —— 待办 ——
       todo: async (arg, { from }) => this._todoCmd(arg, from),
@@ -206,7 +211,7 @@ export class Router {
   bindLlm(llm) {
     this.llm = llm;
     // delegate 工具通过注册表 ctx.delegate 把子智能体执行"倒灌"给 llm
-    this.tools.ctx.delegate = (opts) => this._delegateSub(opts);
+    this.tools.ctx.delegate = (opts) => this.subagent._delegateSub(opts);
     // 结构化摘要器(opencode compaction 风格)
     this._summarize = (summary, batch) => summarizeWithLlm({ llm, previousSummary: summary, messages: batch });
     return this;
@@ -335,43 +340,8 @@ export class Router {
     return names ? this.tools.filter(names) : this.tools;
   }
 
-  /** 显式调用子智能体并返回结果文本 */
-  async _runSubdirect(agentName, task, from) {
-    if (!task) return `用法: /${this.cfg.cmdPrefix} ${agentName} <${agentName === 'math' ? '算式' : '问题'}>`;
-    const r = await this._delegateSub({ agent: agentName, task, from, status: this._lastThink });
-    return r.error ? `子智能体「${agentName}」失败: ${r.error}` : r.result;
-  }
-
-  /** 子智能体执行通道: 独立系统提示词 + 工具白名单 + 独立历史 */
-  async _delegateSub({ agent, task, from, depth = 1, status }) {
-    const def = getAgent(agent);
-    if (!def || def.mode !== 'subagent') return { error: `未知子智能体: ${agent}` };
-    if (!this.llm || typeof this.llm.agentRun !== 'function') return { error: '子智能体通道未就绪' };
-    const view = this._agentView(agent);
-    const systemPrompt = buildAgentSystemPrompt({
-      agent: def,
-      cfg: this.cfg,
-      pondState: this.pondState,
-      sessions: this.sessions,
-      toolList: view.describe().split('\n'),
-    });
-    const think = status || this._lastThink || (() => {});
-    try {
-      const out = await this.llm.agentRun({
-        agentName: agent,
-        systemPrompt,
-        task,
-        tools: view,
-        onThinking: think,
-        from,
-        depth,
-        maxIterations: def.maxIterations || this.cfg.agents.subagentIterations,
-      });
-      return { result: (out && out.result) || '(无输出)' };
-    } catch (e) {
-      return { error: String((e && e.message) || e) };
-    }
-  }
+  /** 显式调用子智能体并返回结果文本 —— 已迁至 subagent.mjs (SubagentDelegate._runSubdirect) */
+  /** 子智能体执行通道 —— 已迁至 subagent.mjs (SubagentDelegate._delegateSub) */
 
   /** math 确定性路径: 安全表达式 + python 执行(纯数字运算, 防注入) */
   async _safeMath(expr, from) {
@@ -518,6 +488,16 @@ export class Router {
       return `你已经领养我啦！用 /${from}的${species} 来召唤专属的我。`;
     }
     if (existing) this.adoptments.delete(from);
+
+    // —— 上限检查: 数当前在线的"<X>的<鱼种>"模式实例 (排除主实例自己) ——
+    const suffix = `的${species}`;
+    const adoptedOnline = (this.pondState && this.pondState.onlineUsers)
+      ? [...this.pondState.onlineUsers].filter((u) => u && u !== species && u.endsWith(suffix))
+      : [];
+    const cap = a.maxInstances || 5;
+    if (adoptedOnline.length >= cap) {
+      return `🎣 领养已达上限（当前在线 ${adoptedOnline.length}/${cap}）。等有主人放手后再来吧~`;
+    }
 
     const owner = from;
     const ownerPrefix = `/${owner}的${species}`;

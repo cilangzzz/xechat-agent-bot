@@ -2,7 +2,7 @@
 // 验证三件事: 1) 腾讯 API 拉数据 2) PIL 画图(无 ctypes) 3) send_file 二进制流程
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { uploadContent } from '../lib/sendup.mjs';
+import { uploadContent } from '../lib/platform/sendup.mjs';
 
 const PYTHON = process.env.PYTHON_CMD || 'python';
 const PNG_PATH = 'C:\\Users\\sysadmin\\AppData\\Local\\Temp\\semicon_chart.png';

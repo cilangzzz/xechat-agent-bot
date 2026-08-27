@@ -84,3 +84,10 @@ function toIndex(input, len) {
 export function todosAsJson(sess) {
   return initTodos(sess);
 }
+
+/** 从 ctx/extra 解析当前工具调用的目标会话(优先 extra.from, 否则 ctx.from); 用于 todo 工具 */
+export function getTodoSession(ctx, extra) {
+  const from = (extra && extra.from) || (ctx && ctx.from);
+  if (ctx && ctx.sessions && from) return ctx.sessions._get(from);
+  return { todos: [] };
+}

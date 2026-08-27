@@ -1,10 +1,10 @@
 // M-2 真实环境复现: agent 的 close-room 工具越权关闭别人房间
 // 用法: node test/verify-close-room.mjs [host] [port]
-import { WsClient } from '../lib/ws-client.mjs';
-import { Router } from '../lib/router.mjs';
-import { SessionStore } from '../lib/sessions.mjs';
-import { XechatApi } from '../lib/xechat-api.mjs';
-import { createLlm } from '../lib/llm.mjs';
+import { WsClient } from '../lib/foundation/ws-client.mjs';
+import { Router } from '../lib/business/router.mjs';
+import { SessionStore } from '../lib/business/sessions.mjs';
+import { XechatApi } from '../lib/platform/xechat-api.mjs';
+import { createLlm } from '../lib/foundation/llm.mjs';
 
 const HOST = process.argv[2] || 'lesscoding.net';
 const PORT = parseInt(process.argv[3] || '33859', 10);

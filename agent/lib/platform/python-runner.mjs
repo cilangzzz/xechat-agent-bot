@@ -107,3 +107,36 @@ function appendCap(buf, chunk, maxOutput) {
   const s = buf + chunk.toString('utf8');
   return s.length > maxOutput ? s.slice(0, maxOutput) + '\n...[输出超限截断]' : s;
 }
+
+// —— Python 安全护栏: 静态审计 (与运行期 prelude 双层防护) ——
+// 命中任一危险模式直接拒绝执行。注意: 正常数学计算/数据处理/文本处理不会触碰这些模式, 无需担心误伤。
+// bypassable: 'font' 表示该规则在 ImageFont.truetype 加载字体场景可放行(用于画中文图)。
+export const PY_BLOCK_RE = [
+  // 1) 执行系统命令
+  { re: /subprocess|os\.system|os\.popen|os\.exec|Popen|spawn\s*\(|shell\s*=\s*True|commands\./i, why: '执行系统命令' },
+  // 2) 动态执行(绕过静态审计的常见手段: eval/exec/__import__/compile)
+  { re: /\bexec\s*\(|\beval\s*\(|__import__|compile\s*\(/i, why: '动态执行代码(可能绕过安全限制)' },
+  // 3) 探测服务器信息(环境变量/平台/网络/硬件)
+  { re: /os\.environ|os\.getenv|os\.uname|os\.getlogin|os\.name\b|platform\.|socket\.|psutil|gethostname|getfqdn|uuid\.getnode|cpu_count|virtual_memory|disk_usage|netifaces/, why: '探测服务器信息' },
+  // 4) 破坏性系统/文件操作
+  { re: /shutil\.(rmtree|move|copy)|os\.(remove|rmdir|unlink)|taskkill|shutdown|reboot|reg\s+(add|delete|edit)|net\s+user/i, why: '破坏性系统操作' },
+  // 5) 读取敏感文件 (硬黑名单, 字体加载也不能放行)
+  { re: /\/etc\/passwd|\/etc\/shadow|\.env["']/i, why: '读取敏感文件' },
+  // 5b) 访问 Windows 系统目录(可被 PIL truetype 加载系统字体时绕过)
+  { re: /C:\\Windows/i, why: '访问系统目录', bypassable: 'font' },
+  // 6) 下载/写盘大文件(占带宽/磁盘)
+  { re: /urlretrieve|\.download\s*\(/i, why: '下载文件到本地' },
+];
+
+/** 静态审计: 返回被拒原因(why) 或 '' 通过。ImageFont.truetype 加载 TTF/TTC/OTF 字体时白名单 bypassable:'font' 规则 */
+export function pythonBlockReason(src) {
+  // 白名单: 仅放行 PIL ImageFont.truetype 加载 TTF/TTC/OTF 字体这一种场景(用于画中文图);
+  // 其它 ctypes / subprocess / 探测系统信息 等规则不受影响, 沙箱底线保留。
+  const isFontLoad = /\bImageFont\s*\.\s*truetype\s*\(/i.test(src)
+    && /\.(ttf|ttc|otf)\b/i.test(src);
+  const hit = PY_BLOCK_RE.find((b) => {
+    if (isFontLoad && b.bypassable === 'font') return false;
+    return b.re.test(src);
+  });
+  return hit ? hit.why : '';
+}

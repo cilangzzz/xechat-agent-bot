@@ -2,19 +2,19 @@
 // 不连网络: fake fetch 模拟 DeepSeek 返回 tool_calls, 验证 llm.agentTurn/agentRun 的工具循环;
 // 新增覆盖: 结构化压缩(compaction)、多智能体委托(delegate)、待办(todo)、技能(skill)、持久记忆(memory)。
 // 运行:  node test/unit-agent.mjs
-import { createLlm } from '../lib/llm.mjs';
-import { createRegistry, ToolRegistry } from '../lib/tools.mjs';
-import { parseCommand, Router } from '../lib/router.mjs';
-import { SessionStore } from '../lib/sessions.mjs';
-import { XechatApi } from '../lib/xechat-api.mjs';
-import { MemoryStore } from '../lib/memory.mjs';
-import { estimateTokens, select, buildSummaryPrompt, SUMMARY_TEMPLATE } from '../lib/compaction.mjs';
-import * as todoHelpers from '../lib/todo.mjs';
-import { getSkill } from '../lib/skills.mjs';
-import { Scheduler, parseAtTime, parseDuration } from '../lib/scheduler.mjs';
-import { createTrigger } from '../lib/trigger.mjs';
-import { ChatLog } from '../lib/chat-log.mjs';
-import { guessMimeType, uploadContent } from '../lib/sendup.mjs';
+import { createLlm } from '../lib/foundation/llm.mjs';
+import { createRegistry, ToolRegistry } from '../lib/business/tools/index.mjs';
+import { parseCommand, Router } from '../lib/business/router.mjs';
+import { SessionStore } from '../lib/business/sessions.mjs';
+import { XechatApi } from '../lib/platform/xechat-api.mjs';
+import { MemoryStore } from '../lib/business/memory.mjs';
+import { estimateTokens, select, buildSummaryPrompt, SUMMARY_TEMPLATE } from '../lib/foundation/compaction.mjs';
+import * as todoHelpers from '../lib/business/todo.mjs';
+import { getSkill } from '../lib/business/skills.mjs';
+import { Scheduler, parseAtTime, parseDuration } from '../lib/business/scheduler.mjs';
+import { createTrigger } from '../lib/business/trigger.mjs';
+import { ChatLog } from '../lib/business/chat-log.mjs';
+import { guessMimeType, uploadContent } from '../lib/platform/sendup.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { writeFileSync, unlinkSync } from 'node:fs';
@@ -221,7 +221,7 @@ console.log('[3b] llm.agentRun 子智能体');
 // —— 3c. 泄漏工具调用文本 → 恢复执行/剥除 (模型把工具调用写成文本的兜底) ——
 console.log('[3c] 泄漏工具调用恢复');
 {
-  const { extractToolCallFromText, stripLeakedToolCallText } = await import('../lib/tool-call-parse.mjs');
+  const { extractToolCallFromText, stripLeakedToolCallText } = await import('../lib/foundation/tool-call-parse.mjs');
   // 解析: Anthropic XML
   const xml = '<tool_calls>\n<invoke name="now"><parameter name="x">1</parameter></invoke>\n</tool_calls>';
   const p1 = extractToolCallFromText(xml, new Set(['now']));
@@ -551,7 +551,7 @@ console.log('[6] python 工具执行');
 // —— 7. 统一回复发送器 (分片/还原) ——
 console.log('[7] makeReplySender 统一发送/分片');
 {
-  const { makeReplySender, splitForMarkdown } = await import('../lib/reply.mjs');
+  const { makeReplySender, splitForMarkdown } = await import('../lib/business/reply.mjs');
   const sent = [];
   const sendReply = makeReplySender({ send: (c, to) => { sent.push({ c, to }); }, maxLen: 200, chunkDelayMs: 0 });
   await sendReply('短消息', 'u1');
@@ -740,10 +740,12 @@ console.log('[8c] 定时/聊天记录 工具与命令');
   try { require('node:fs').unlinkSync(logFile); } catch (e) {}
 }
 
-// —— 8d. 文件分享 (sendup.cc 三步上传) ——
-console.log('[8d] 文件分享 sendup.cc (内容驱动)');
+// —— 8d. 文件分享 (sendup.cc 三步上传) + 平台上传 (upload_image) ——
+//    sendup.mjs 仍存在(密码/有效期等 sendup.cc 特性), 但 send_file 工具已禁用;
+//    新工具 upload_image 走 /api/file/upload, 验证其参数透传与错误兜底。
+console.log('[8d] 文件分享 + 平台上传');
 {
-  // 1) mime 推断
+  // 1) sendup.mjs 单元 (mime 推断 + uploadContent 预检; 仍适用, 模块未删除)
   check('guessMimeType .txt', guessMimeType('a.txt') === 'text/plain');
   check('guessMimeType .md', guessMimeType('a.md') === 'text/markdown');
   check('guessMimeType .json', guessMimeType('a.json') === 'application/json');
@@ -753,7 +755,6 @@ console.log('[8d] 文件分享 sendup.cc (内容驱动)');
   check('guessMimeType 未知扩展', guessMimeType('a.unknownext') === 'application/octet-stream');
   check('guessMimeType 无扩展', guessMimeType('README') === 'application/octet-stream');
 
-  // 2) 预检: 无 filename / 无 content / 空 / 过大 → 抛错(不走 Python)
   let threw = '';
   try { await uploadContent('hello', { filename: '' }); } catch (e) { threw = e.message; }
   check('uploadContent 无 filename 抛错', /缺少文件名/.test(threw), `实际: ${threw}`);
@@ -774,76 +775,80 @@ console.log('[8d] 文件分享 sendup.cc (内容驱动)');
   try { await uploadContent('x', { filename: 'a/bad.txt' }); } catch (e) { threw = e.message; }
   check('uploadContent 非法文件名抛错', /非法字符/.test(threw), `实际: ${threw}`);
 
-  // 3) send_file 工具: 用 mock sender 验证参数透传 + 错误兜底
+  // 2) upload_image 工具 (替代 send_file): mock ctx.api.uploadFile 验证参数透传 + 错误兜底
   let capturedArgs = null;
-  const mockSender = {
-    enabled: true,
-    timeoutMs: 5000,
-    maxBytes: 50 * 1024 * 1024,
-    upload: async (content, opts) => {
-      capturedArgs = { content, opts };
-      return { success: true, share_url: 'https://sendup.cc/x/abc', original_filename: opts.filename, file_size: opts.isBinary ? Math.floor(content.length * 0.75) : Buffer.byteLength(content, 'utf8'), mime_type: guessMimeType(opts.filename), expires_at: '2026-08-28' };
+  const mockApi = {
+    token: 'mock-token', // 预填 token, 跳过 _ensureLogin
+    uploadFile: async (args) => {
+      capturedArgs = args;
+      return {
+        id: 42,
+        fileName: args.filename,
+        filePath: `${args.bizType}/${args.filename}`,
+        fileSize: args.isBinary ? Math.floor(args.content.length * 0.75) : Buffer.byteLength(args.content, 'utf8'),
+        mimeType: 'image/png',
+        bizType: args.bizType,
+        md5: 'fake-md5',
+        view_url: 'https://dld.lesscoding.net/api/file/view/42',
+        download_url: 'https://dld.lesscoding.net/api/file/download/42',
+      };
     },
   };
-  const regSu = createRegistry({
+  const regUi = createRegistry({
     startTime: Date.now(),
     pondState: { onlineUsers: new Set() },
     sessions: new SessionStore({}),
-    api: new XechatApi({ base: 'https://fake', fetchFn: fakeApiFetch }),
+    api: mockApi,
     python: { cmd: 'python', timeoutMs: 10000 },
     web: { enabled: true }, skills: { enabled: true }, todo: { maxItems: 20 },
-    sendup: mockSender,
   });
-  check('send_file 工具已注册', regSu.list().includes('send_file'));
+  check('upload_image 工具已注册', regUi.list().includes('upload_image'));
+  check('send_file 工具已下线', !regUi.list().includes('send_file'));
 
-  // 文本内容
-  const rText = await regSu.dispatch('send_file', {
+  // 文本内容 (MD)
+  const rText = await regUi.dispatch('upload_image', {
     content: '# 分析报告\n\n今天金价...',
     filename: '报告.md',
-    password: '1234',
-    expire_minutes: 60,
+    bizType: 'user_avatar',
   }, { from: 'u1' });
-  check('send_file 文本(MD)返回 share_url', rText.success === true && /sendup\.cc\/x\/abc/.test(rText.share_url) && rText.filename === '报告.md' && rText.mime_type === 'text/markdown');
-  check('send_file 参数透传(content/filename/密码/expire)',
+  check('upload_image 文本(MD)返回 view_url', rText.success === true && /file\/view\/42/.test(rText.view_url) && rText.fileName === '报告.md' && rText.bizType === 'user_avatar' && rText.download_url);
+  check('upload_image 文本参数透传(content/filename/bizType)',
     capturedArgs && capturedArgs.content === '# 分析报告\n\n今天金价...' &&
-    capturedArgs.opts.filename === '报告.md' && capturedArgs.opts.isBinary === false &&
-    capturedArgs.opts.password === '1234' && capturedArgs.opts.expireMinutes === '60');
+    capturedArgs.filename === '报告.md' && capturedArgs.isBinary === false &&
+    capturedArgs.bizType === 'user_avatar');
 
-  // 二进制(截图): base64 + is_binary
+  // 二进制 (截图): base64 + is_binary
+  capturedArgs = null;
   const fakePng = Buffer.from('fake-png-bytes-here').toString('base64');
-  mockSender.upload = async (content, opts) => {
-    capturedArgs = { content, opts };
-    return { success: true, share_url: 'https://sendup.cc/y/img', original_filename: opts.filename, file_size: 18, mime_type: 'image/png', expires_at: '2026-08-28' };
-  };
-  const rBin = await regSu.dispatch('send_file', {
+  const rBin = await regUi.dispatch('upload_image', {
     content: fakePng, filename: 'screenshot.png', is_binary: true,
   }, { from: 'u1' });
-  check('send_file 二进制(base64+is_binary)返回 share_url', rBin.success === true && rBin.mime_type === 'image/png');
-  check('send_file 二进制 is_binary 透传', capturedArgs && capturedArgs.opts.isBinary === true);
+  check('upload_image 二进制(base64+is_binary)返回 view_url', rBin.success === true && /file\/view\/42/.test(rBin.view_url) && rBin.mimeType === 'image/png');
+  check('upload_image 二进制 is_binary 透传', capturedArgs && capturedArgs.isBinary === true);
 
-  // 缺 content
-  const rMiss = await regSu.dispatch('send_file', { filename: 'a.md' }, { from: 'u1' });
-  check('send_file 缺 content 报错', /缺少必填参数/.test(rMiss.error) && /content/.test(rMiss.error));
+  // 缺 content → 工具级 required 校验
+  const rMiss = await regUi.dispatch('upload_image', { filename: 'a.md' }, { from: 'u1' });
+  check('upload_image 缺 content 报错', /缺少必填参数/.test(rMiss.error) && /content/.test(rMiss.error));
 
-  // 缺 filename
-  const rMissF = await regSu.dispatch('send_file', { content: 'x' }, { from: 'u1' });
-  check('send_file 缺 filename 报错', /缺少必填参数/.test(rMissF.error) && /filename/.test(rMissF.error));
+  // 缺 filename → 工具级 required 校验
+  const rMissF = await regUi.dispatch('upload_image', { content: 'x' }, { from: 'u1' });
+  check('upload_image 缺 filename 报错', /缺少必填参数/.test(rMissF.error) && /filename/.test(rMissF.error));
 
-  // 失败兜底
-  mockSender.upload = async () => ({ success: false, stage: 'put_file', error: 'HTTP 403' });
-  const rFail = await regSu.dispatch('send_file', { content: 'x', filename: 'a.md' }, { from: 'u1' });
-  check('send_file 失败带 stage', /上传失败\(put_file\)/.test(rFail.error) && rFail.stage === 'put_file');
+  // API 抛错 → 工具兜底
+  mockApi.uploadFile = async () => { throw new Error('HTTP 500'); };
+  const rFail = await regUi.dispatch('upload_image', { content: 'x', filename: 'a.md' }, { from: 'u1' });
+  check('upload_image 失败带错误信息', /上传失败/.test(rFail.error) && /HTTP 500/.test(rFail.error));
 
-  // 关掉: 直接报错
-  const regOff = createRegistry({
+  // 未注入 api → 报错
+  const regNoApi = createRegistry({
     startTime: Date.now(),
     pondState: { onlineUsers: new Set() },
     sessions: new SessionStore({}),
-    api: new XechatApi({ base: 'https://fake', fetchFn: fakeApiFetch }),
-    sendup: { enabled: false, upload: async () => ({}) },
+    python: { cmd: 'python', timeoutMs: 10000 }, web: { enabled: true },
+    skills: { enabled: true }, todo: { maxItems: 20 },
   });
-  const rOff = await regOff.dispatch('send_file', { content: 'x', filename: 'a.md' }, { from: 'u1' });
-  check('send_file 关掉时拒绝', /未开启/.test(rOff.error));
+  const rNoApi = await regNoApi.dispatch('upload_image', { content: 'x', filename: 'a.md' }, { from: 'u1' });
+  check('upload_image 无 api 注入报错', /XechatApi 未注入/.test(rNoApi.error));
 }
 
 if (failures) { console.error(`\n❌ UNIT FAIL: ${failures} 项失败`); process.exit(1); }

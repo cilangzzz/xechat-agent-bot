@@ -5,17 +5,18 @@
 // 离线自测: MOCK_LLM=1 PROXY_PORT=0 node agent.mjs  (或跑 test/run-e2e.mjs)
 import fs from 'node:fs';
 import { loadConfig, loadDotEnv } from './config.mjs';
-import { WsClient } from './lib/ws-client.mjs';
-import { createLlm } from './lib/llm.mjs';
-import { SessionStore } from './lib/sessions.mjs';
-import { Router, extractMention } from './lib/router.mjs';
-import { XechatApi } from './lib/xechat-api.mjs';
-import { makeReplySender } from './lib/reply.mjs';
-import { MemoryStore } from './lib/memory.mjs';
-import { Scheduler } from './lib/scheduler.mjs';
-import { createTrigger } from './lib/trigger.mjs';
-import { ChatLog } from './lib/chat-log.mjs';
-import { uploadContent as sendupUpload } from './lib/sendup.mjs';
+import { WsClient } from './lib/foundation/ws-client.mjs';
+import { createLlm } from './lib/foundation/llm.mjs';
+import { SessionStore } from './lib/business/sessions.mjs';
+import { Router, extractMention } from './lib/business/router.mjs';
+import { XechatApi } from './lib/platform/xechat-api.mjs';
+import { makeReplySender } from './lib/business/reply.mjs';
+import { MemoryStore } from './lib/business/memory.mjs';
+import { Scheduler } from './lib/business/scheduler.mjs';
+import { createTrigger } from './lib/business/trigger.mjs';
+import { ChatLog } from './lib/business/chat-log.mjs';
+import { uploadContent as sendupUpload } from './lib/platform/sendup.mjs';
+import { createImageGenerator } from './lib/platform/minimax-image.mjs';
 
 loadDotEnv();
 // —— 命令行动态参数: node agent.mjs [登录名] [--prefix /xxx] [--owner 领养人] [--help]
@@ -82,6 +83,7 @@ const scheduler = new Scheduler({ ...cfg.scheduler, log }); // 定时任务
 const trigger = createTrigger({ ...cfg.trigger, log, botNames: [cfg.username, '大黄鱼', '草鱼'].filter(Boolean) }); // 多人发言主动消息触发器(默认关)
 const chatLog = new ChatLog({ ...cfg.chatLog, log }); // 聊天记录日志(持久化)
 const sendup = { ...cfg.sendup, upload: sendupUpload }; // 文件分享 (sendup.cc 三步上传, 内容驱动)
+const minimaxImage = createImageGenerator({ ...cfg.minimaxImage, proxy: cfg.proxy, log }); // MiniMax 图片生成 (文生图/图生图)
 
 // 聊天记录环形缓冲: 只记连接后当前会话收到的消息, 不回溯历史
 function pushRoomLog(m) {
@@ -93,7 +95,7 @@ function pushRoomLog(m) {
 // 领养: 多人可各领一只; 仅本次进程运行期内存记录, 重启不预恢复(领养了自然再登记)
 const adoptments = new Map(); // 领养人 -> { child }
 const client = new WsClient({ ...cfg, log });
-const router = new Router({ cfg, sessions, pondState, startTime, api, memory, adoptments, ws: client, scheduler, chatLog, sendup }).bindLlm(llm);
+const router = new Router({ cfg, sessions, pondState, startTime, api, memory, adoptments, ws: client, scheduler, chatLog, sendup, minimaxImage }).bindLlm(llm);
 let lastReply = 0;   // 上次回复时间戳, 用于指令冷却
 // 并发: 不用全局 replying; 改为 per-user tryLock —— 不同用户可并行处理, 同一用户后续消息跳过。
 const busyUsers = new Set();

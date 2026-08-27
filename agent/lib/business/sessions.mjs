@@ -2,7 +2,7 @@
 // 每个用户独立的会话 = 摘要(summary) + 最近消息 + 待办(todos)。
 // 压缩策略参考 opencode: 按 token 预算保留最近对话(tail)、把多余旧消息(head)交给 LLM 压成
 // 结构化摘要(compaction.mjs), 增量合并到已有摘要 —— 上下文始终有界且可继续工作。
-import { estimateTokens, select } from './compaction.mjs';
+import { estimateTokens, select } from '../foundation/compaction.mjs';
 
 export class SessionStore {
   constructor({ historyMax = 10, compressAt = 14, summaryMaxLen = 800, ttlMs = 0, compressBudgetTokens = 3000 } = {}) {
