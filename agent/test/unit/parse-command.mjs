@@ -1,5 +1,5 @@
 // agent 测试 —— [1] parseCommand (router 里的命令解析)
-import { parseCommand } from '../../../lib/business/router.mjs';
+import { parseCommand } from '../../lib/business/router.mjs';
 import { check } from './_state.mjs';
 
 export async function run() {

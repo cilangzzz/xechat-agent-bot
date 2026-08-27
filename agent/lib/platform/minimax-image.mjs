@@ -104,6 +104,15 @@ export function createImageGenerator(opts = {}) {
             raw: body,
           };
         }
+        // MiniMax 错误也可能以 HTTP 200 + base_resp 返回 (如用量超限 status_code=2056)
+        const br = body.base_resp;
+        if (br && br.status_code && br.status_code !== 0) {
+          return {
+            success: false,
+            error: `MiniMax API 错误(${br.status_code}): ${br.status_msg || '未知'}`.trim(),
+            raw: body,
+          };
+        }
         const data = body.data || {};
         const list = Array.isArray(data.image_base64) ? data.image_base64 : [];
         if (!list.length) {

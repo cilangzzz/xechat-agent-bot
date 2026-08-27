@@ -1,5 +1,5 @@
 // agent 测试 —— [5] SessionStore 多用户隔离 / token 预算压缩 / tryLock
-import { SessionStore } from '../../../lib/business/sessions.mjs';
+import { SessionStore } from '../../lib/business/sessions.mjs';
 import { check } from './_state.mjs';
 
 export async function run() {

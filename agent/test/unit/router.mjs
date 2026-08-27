@@ -1,8 +1,8 @@
 // agent 测试 —— Router 路由 / 多智能体指令 / 游戏房间 (fake WS) / list_rooms
-import { createRegistry } from '../../../lib/business/tools/index.mjs';
-import { Router } from '../../../lib/business/router.mjs';
-import { SessionStore } from '../../../lib/business/sessions.mjs';
-import { XechatApi } from '../../../lib/platform/xechat-api.mjs';
+import { createRegistry } from '../../lib/business/tools/index.mjs';
+import { Router } from '../../lib/business/router.mjs';
+import { SessionStore } from '../../lib/business/sessions.mjs';
+import { XechatApi } from '../../lib/platform/xechat-api.mjs';
 import { check } from './_state.mjs';
 import { fakeApiFetch } from './_fixtures.mjs';
 

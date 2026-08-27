@@ -1,6 +1,6 @@
 // agent 测试 —— [8] Scheduler 定时任务 / [8b] createTrigger 主动消息触发器
-import { Scheduler, parseAtTime, parseDuration } from '../../../lib/business/scheduler.mjs';
-import { createTrigger } from '../../../lib/business/trigger.mjs';
+import { Scheduler, parseAtTime, parseDuration } from '../../lib/business/scheduler.mjs';
+import { createTrigger } from '../../lib/business/trigger.mjs';
 import { check } from './_state.mjs';
 
 export async function run() {

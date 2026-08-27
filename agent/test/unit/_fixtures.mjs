@@ -1,9 +1,9 @@
 // agent 测试 —— 共享 fake: fakeApiFetch + makeRegistry
 // fakeApiFetch: 模拟 Xechat 平台 API (游戏列表/详情/排行榜)
 // makeRegistry: 快速构造一个 ToolRegistry, 带在线用户 + 假 api + 默认子能力配置
-import { createRegistry } from '../../../lib/business/tools/index.mjs';
-import { SessionStore } from '../../../lib/business/sessions.mjs';
-import { XechatApi } from '../../../lib/platform/xechat-api.mjs';
+import { createRegistry } from '../../lib/business/tools/index.mjs';
+import { SessionStore } from '../../lib/business/sessions.mjs';
+import { XechatApi } from '../../lib/platform/xechat-api.mjs';
 
 export function fakeApiFetch(url) {
   const respond = (obj) => ({ ok: true, json: async () => obj });

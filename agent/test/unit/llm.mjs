@@ -1,6 +1,6 @@
 // agent 测试 —— LLM 工具循环 / 子智能体回合 / 泄漏恢复 / Reflect + Doom-loop
 // 覆盖 lib/foundation/llm.mjs + tool-call-parse.mjs
-import { createLlm } from '../../../lib/foundation/llm.mjs';
+import { createLlm } from '../../lib/foundation/llm.mjs';
 import { check } from './_state.mjs';
 import { makeRegistry } from './_fixtures.mjs';
 
@@ -59,7 +59,7 @@ export async function run() {
   // —— 3c. 泄漏工具调用文本 → 恢复执行/剥除 ——
   console.log('[3c] 泄漏工具调用恢复');
   {
-    const { extractToolCallFromText, stripLeakedToolCallText } = await import('../../../lib/foundation/tool-call-parse.mjs');
+    const { extractToolCallFromText, stripLeakedToolCallText } = await import('../../lib/foundation/tool-call-parse.mjs');
     const xml = '<tool_calls>\n<invoke name="now"><parameter name="x">1</parameter></invoke>\n</tool_calls>';
     const p1 = extractToolCallFromText(xml, new Set(['now']));
     check('解析 Anthropic XML 工具调用', p1 && p1.calls.length === 1 && p1.calls[0].name === 'now');

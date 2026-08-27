@@ -1,16 +1,16 @@
 // agent 测试 —— 工具注册表 / 技能 / 待办 / 记忆 / 压缩 / 定时·聊天记录 / 上传
 // 覆盖 lib/business/tools/ 全部工具类测试 + compaction / sendup 相关模块
-import { createRegistry, ToolRegistry } from '../../../lib/business/tools/index.mjs';
-import { SessionStore } from '../../../lib/business/sessions.mjs';
-import { XechatApi } from '../../../lib/platform/xechat-api.mjs';
-import { MemoryStore } from '../../../lib/business/memory.mjs';
-import { estimateTokens, select, buildSummaryPrompt, SUMMARY_TEMPLATE } from '../../../lib/foundation/compaction.mjs';
-import * as todoHelpers from '../../../lib/business/todo.mjs';
-import { getSkill } from '../../../lib/business/skills.mjs';
-import { Scheduler, parseAtTime, parseDuration } from '../../../lib/business/scheduler.mjs';
-import { ChatLog } from '../../../lib/business/chat-log.mjs';
-import { guessMimeType, uploadContent } from '../../../lib/platform/sendup.mjs';
-import { Router } from '../../../lib/business/router.mjs';
+import { createRegistry, ToolRegistry } from '../../lib/business/tools/index.mjs';
+import { SessionStore } from '../../lib/business/sessions.mjs';
+import { XechatApi } from '../../lib/platform/xechat-api.mjs';
+import { MemoryStore } from '../../lib/business/memory.mjs';
+import { estimateTokens, select, buildSummaryPrompt, SUMMARY_TEMPLATE } from '../../lib/foundation/compaction.mjs';
+import * as todoHelpers from '../../lib/business/todo.mjs';
+import { getSkill } from '../../lib/business/skills.mjs';
+import { Scheduler, parseAtTime, parseDuration } from '../../lib/business/scheduler.mjs';
+import { ChatLog } from '../../lib/business/chat-log.mjs';
+import { guessMimeType, uploadContent } from '../../lib/platform/sendup.mjs';
+import { Router } from '../../lib/business/router.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { unlinkSync } from 'node:fs';
