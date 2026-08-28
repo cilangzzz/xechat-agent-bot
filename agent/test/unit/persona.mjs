@@ -2,7 +2,8 @@
 // 覆盖: 文本特征 / 时间偏好 / 用户黏性 / 房间氛围 / 平局退路 / FIFO 黏性淘汰 / persona 内置命令
 import {
   MODE_FORMAL, MODE_HUMAN,
-  createPersonaTrigger, pickPersona, scoreMessage, getHumanSystemPrompt,
+  createPersonaTrigger, createPersonaEngine, pickPersona, scoreMessage, getHumanSystemPrompt,
+  enrichDecision, humanizeReply,
 } from '../../lib/business/persona.mjs';
 import { Router } from '../../lib/business/router.mjs';
 import { SessionStore } from '../../lib/business/sessions.mjs';
@@ -10,6 +11,9 @@ import { XechatApi } from '../../lib/platform/xechat-api.mjs';
 import { createRegistry } from '../../lib/business/tools/index.mjs';
 import { fakeApiFetch } from './_fixtures.mjs';
 import { check } from './_state.mjs';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
 
 export async function run() {
   console.log('[9] persona 拟人触发器');
@@ -128,9 +132,133 @@ export async function run() {
       `实际: ${sticky.join(',')}`);
   }
 
-  // —— 9.6 getHumanSystemPrompt 存在且非空 —— //
+  // —— 9.6 getHumanSystemPrompt (内置李乐儿种子) 存在且非空 —— //
   {
-    check('HUMAN_SYSTEM_PROMPT 非空', /老网友/.test(getHumanSystemPrompt()), 'no 老网友 in prompt');
+    check('BASE_PERSONA_PROMPT 含李乐儿', /李乐儿/.test(getHumanSystemPrompt()) && /云南/.test(getHumanSystemPrompt()),
+      'no 李乐儿/云南 in prompt');
+    check('BASE_PERSONA_PROMPT 含示例', /Example/.test(getHumanSystemPrompt()), 'no Example in prompt');
+    // v2: 不再默认 "emoji 优先 🐟" (这是 LLM 复读机的根因)
+    check('种子不强制 🐟 emoji (避免模型 tell)', !/emoji\s*优先.*🐟/.test(getHumanSystemPrompt()) && !/优先用.*🐟/.test(getHumanSystemPrompt()),
+      '仍含固定 emoji 提示');
+    check('种子强调分段发', /分段|分多条|连发|不黏长句/.test(getHumanSystemPrompt()), '未提分段');
+  }
+
+  // —— 9.6c 真人化随机层 + 防 tell 后处理 —— //
+  console.log('[9.6c] 真人化随机层 + humanizeReply');
+  {
+    // (a) enrichDecision 必须返回 mood/lengthBudget/emojiBudget/typoChance/reply 五个字段
+    const seedRng = () => 0.0; // 全用同一种
+    const base = pickPersona('好家伙搁这装笑死', 'u1', { lastModeByUser: new Map(), roomLog: [] });
+    const enriched = enrichDecision(base, 'u1', { text: '好家伙搁这装笑死', from: 'u1', rng: seedRng });
+    check('enrichDecision 返回 mood', typeof enriched.mood === 'string');
+    check('enrichDecision 返回 lengthBudget', ['one-liner','short','normal','verbose','essay'].includes(enriched.lengthBudget),
+      `bad: ${enriched.lengthBudget}`);
+    check('enrichDecision 返回 emojiBudget 0/1/2', [0,1,2].includes(enriched.emojiBudget));
+    check('enrichDecision 返回 typoChance', enriched.typoChance >= 0.04 && enriched.typoChance <= 0.16);
+    check('enrichDecision 返回 reply', ['respond','lurk','busy'].includes(enriched.reply));
+
+    // (b) 5% 随机 lurk 不该太密也不是 0: 跑 1000 次, 期望 ~50 ± 30
+    let lurkCount = 0;
+    for (let i = 0; i < 1000; i++) {
+      const d = enrichDecision(base, 'u1', { text: '', from: 'u1', rng: Math.random });
+      if (d.reply === 'lurk') lurkCount++;
+    }
+    check('随机 lurk 比例约 5% (容差 1-15%)', lurkCount >= 10 && lurkCount <= 150, `count=${lurkCount}/1000`);
+
+    // (c) humanizeReply: 拆 "嗯嗯, 你说得对, 儒雅随和" 三段 (测试用长上限避免被截断)
+    const r1 = humanizeReply('嗯嗯, 你说得对, 儒雅随和', { maxTotalChars: 200, maxSegments: 5 });
+    check('humanizeReply 拆经典 AI 模板', r1.includes('\n') && /嗯嗯/.test(r1) && /儒雅随和/.test(r1),
+      `actual: ${r1}`);
+
+    // (d) humanizeReply: 拦 "我就是个路过的散户" "我是真人" 那种自我辩护
+    check('humanizeReply 改写"我就是个路过的散户"', !/我就是个路过的散户/.test(humanizeReply('我就是个路过的散户, 别乱扣帽子')));
+    check('humanizeReply 改写"我是真人"', !/我是真人/.test(humanizeReply('我是真人别怀疑')));
+    check('humanizeReply 改写"我不是 AI"', !/我不是 AI/.test(humanizeReply('我不是 AI 你别扣帽子')));
+
+    // (e) humanizeReply: 限制一条消息里的 emoji 数不超过 2 个
+    const tooMany = humanizeReply('笑死 🐟 🐟 🐟 🐟 🐟');
+    const emojis = (tooMany.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu) || []).length;
+    check('humanizeReply emoji 数 ≤2', emojis <= 2, `emoji count=${emojis}`);
+
+    // (f) humanizeReply: 句末的 🐟 拆到独立行
+    const last = humanizeReply('好家伙你这操作 🐟');
+    check('humanizeReply 句末 🐟 拆独立行', /\n/.test(last) || !last.endsWith('🐟'), `actual: ${last}`);
+
+    // (g) v2 硬截断: 总长 > 50 字 + 段数 > 2 直接砍
+    const tooLong = humanizeReply('第一行\n第二行\n第三行\n第四行\n第五行');
+    const lineCount = tooLong.split('\n').length;
+    check('humanizeReply 段数 ≤2 (硬截断)', lineCount <= 2, `lines=${lineCount}: ${tooLong}`);
+
+    // (h) 骂家庭谐音硬拦 (这是绝对红线, 不管 LLM 输出成什么样都得拦)
+    check('humanizeReply 拦"冯"谐音"妈"', !/冯/.test(humanizeReply('操你冯的')));
+    check('humanizeReply 拦"立人"谐音"人"', !/立人/.test(humanizeReply('你家立人无了吧')));
+    check('humanizeReply 拦"牛魔"谐音"你妈"', !/牛魔/.test(humanizeReply('牛魔死了吧你')));
+    check('humanizeReply 拦"福"谐音"妈"', !/福/.test(humanizeReply('尼玛的福')));
+    check('humanizeReply 拦"你妈死了"', !/你妈死/.test(humanizeReply('你妈死了 真的')));
+    check('humanizeReply 拦"你家人都没了"', !/你家.*(没|亡|无)/.test(humanizeReply('你家人都没了')));
+  }
+
+  // —— 9.6b createPersonaEngine: 启动调 LLM 生成 / 缓存 / 失败兜底 —— //
+  console.log('[9.6b] persona engine (启动调 LLM 生成人设)');
+  // mock 的 prompt 长度 >= 100 字以通过默认 minLength
+  const MOCK_GENERATED = '【AI生成的人设】我是李乐儿, 25岁, 视频策划/摄影师, 云南昭通人, 现居北京。说话活泼可爱, 常用哈哈哈, 偶尔用"喃"、"啊"、"哈"等云南语气词; 不会用"呢/耶/~"做结尾, 不端架子, 不暴露 AI 身份。对方熟人可以调侃, 不熟正常自然。';
+  const MOCK_REGEN = '【二次生成人设】我是李乐儿, 25 岁。' + 'a'.repeat(100);
+  const MOCK_CACHE = '【缓存人设】我是李乐儿, 25岁, 云南昭通人, 现居北京, 北大本科; 说话活泼, 用"哈哈哈"和云南语气词; 不端架子, 不暴露 AI 身份; 对熟人调侃, 不熟正常。' + 'b'.repeat(60);
+
+  {
+    // (a) 成功生成
+    const logs = [];
+    const eng = createPersonaEngine({
+      llm: { chat: async () => MOCK_GENERATED },
+      log: (s) => logs.push(s),
+    });
+    check('engine 生成前用种子', /李乐儿/.test(eng.getPrompt()));
+    await eng.init();
+    const m = eng.getMeta();
+    check('engine 生成成功 status=ready', m.status === 'ready', `actual: ${m.status}`);
+    check('engine 生成成功 source=generated', m.source === 'generated', `actual: ${m.source}`);
+    check('engine 生成后注入 AI 结果', /AI生成的人设/.test(eng.getPrompt()));
+
+    // (b) LLM 失败 → 退回种子
+    const eng2 = createPersonaEngine({
+      llm: { chat: async () => { throw new Error('api down'); } },
+      log: () => {},
+    });
+    await eng2.init();
+    const m2 = eng2.getMeta();
+    check('engine 失败兜底 source=base', m2.source === 'base' && m2.status === 'failed', `actual: ${m2.source}/${m2.status}`);
+    check('engine 失败兜底内容=李乐儿', /李乐儿/.test(eng2.getPrompt()));
+
+    // (c) 生成结果过短 → 视为失败
+    const eng3 = createPersonaEngine({
+      llm: { chat: async () => '短', },
+      log: () => {},
+      minLength: 50,
+    });
+    await eng3.init();
+    check('engine 过短结果兜底 base', eng3.getMeta().source === 'base', `actual: ${eng3.getMeta().source}`);
+
+    // (d) 缓存: 有缓存 & 不 regen → 直接用缓存, 不调 LLM
+    const tmpDir = os.tmpdir();
+    const cacheFile = path.join(tmpDir, 'persona-test-' + Math.random().toString(36).slice(2) + '.json');
+    fs.writeFileSync(cacheFile, JSON.stringify({ persona: MOCK_CACHE, source: 'generated', savedAt: 123 }), 'utf8');
+    let llmCalled = false;
+    const eng4 = createPersonaEngine({ llm: { chat: async () => { llmCalled = true; return MOCK_GENERATED; } }, log: () => {}, cacheFile, regen: false });
+    await eng4.init();
+    check('engine 有缓存直接加载', eng4.getMeta().source === 'cache' && /缓存人设/.test(eng4.getPrompt()), `actual: ${eng4.getMeta().source}`);
+    check('engine 有缓存不调 LLM', llmCalled === false, `llmCalled=${llmCalled}`);
+    // regen=true → 忽略缓存, 重生成
+    let llmCalled2 = false;
+    const eng5 = createPersonaEngine({ llm: { chat: async () => { llmCalled2 = true; return MOCK_REGEN; } }, log: () => {}, cacheFile, regen: true });
+    await eng5.init();
+    check('engine regen=true 忽略缓存重生成', eng5.getMeta().source === 'generated' && llmCalled2 === true && /二次生成/.test(eng5.getPrompt()),
+      `actual: ${eng5.getMeta().source} llmCalled=${llmCalled2}`);
+    // regenerate() 手动重生成
+    const eng6 = createPersonaEngine({ llm: { chat: async () => MOCK_REGEN }, log: () => {} });
+    await eng6.init();
+    await eng6.regenerate();
+    check('engine regenerate() 二次生成', /二次生成/.test(eng6.getPrompt()));
+    fs.unlinkSync(cacheFile);
   }
 
   // —— 9.7 Router 内置命令: /大黄鱼 persona 测试 —— //
@@ -181,14 +309,21 @@ export async function run() {
     check('重置后 alice 不存在', router.persona.getStickiness('alice') == null);
   }
 
-  // —— 9.8 handleMention 端到端: 高 human 信号 → 应记录 human mode —— //
-  console.log('[9.8] handleMention 选中 human, 走 HUMAN_SYSTEM_PROMPT');
+  // —— 9.8 handleMention 端到端: 高 human 信号 → 应记录 human mode + 注入动态人设 —— //
+  console.log('[9.8] handleMention 选中 human, 走 HUMAN_SYSTEM_PROMPT (李乐儿)');
   {
     const cfg = {
       cmdPrefix: '/大黄鱼',
       username: '大黄鱼',
       mention: { enabled: true, chatKeyPrefix: 'chat:' }, // 必须开 mention
       persona: { enabled: true, defaultMode: MODE_FORMAL, tieMargin: 0.15 },
+    };
+
+    // 注入一个 mock 人设引擎 (engine 优先于 getHumanSystemPrompt)
+    const fakeEngine = {
+      getPrompt: () => '【引擎注入的人设】: 李乐儿 / 云南昭通 / 哈哈哈',
+      getMeta: () => ({ enabled: true, status: 'ready', source: 'fake', generatedAt: '2026-08-28', err: null, len: 50 }),
+      regenerate: async () => {},
     };
     const sessions = new SessionStore({ historyMax: 5 });
     const pondState = { onlineUsers: new Set(), roomLog: [] };
@@ -199,39 +334,49 @@ export async function run() {
       chat: async () => '',
       agentTurn: async ({ systemPrompt }) => {
         seen.push('PROMPT_LEN=' + systemPrompt.length);
-        seen.push('PROMPT_HAS_老网友=' + /老网友/.test(systemPrompt));
+        seen.push('PROMPT_HAS_引擎人设=' + /引擎注入的人设/.test(systemPrompt));
+        seen.push('PROMPT_HAS_李乐儿=' + /李乐儿/.test(systemPrompt));
         seen.push('PROMPT_HAS_AI_助手=' + /AI 助手/.test(systemPrompt));
         return '【测试回复】';
       },
     };
     const router = new Router({
-      cfg, sessions, pondState, startTime: Date.now(), api,
+      cfg, sessions, pondState, startTime: Date.now(), api, personaEngine: fakeEngine,
       log: (s) => seen.push(s),
     }).bindLlm(llmMock);
-    // 人设: 强烈 human 信号 (俚语 + 多 emoji + 短) → 应选 human
+    // 注入确定性 rng: 让 lurk 测试永远走 respond (避免 5% 随机翻车)
+    // (rng>0.99 时 pickReplyAction 才不会走 lurk 分支)
+    router.persona._fixedRngForTest = () => 0.99;
+    const origAnalyze = router.persona.analyze.bind(router.persona);
+    router.persona.analyze = function (...args) {
+      return origAnalyze(...args, { rng: this._fixedRngForTest });
+    };
+    // 人设: 强烈 human 信号 (俚语 + 多 emoji + 短) → 应选 human, 注入引擎人设
     const reply = await router.handleMention({ from: 'tom', text: '好家伙, 搁这装呢, 笑死 🤣🤣', isLive: true });
-    check('handleMention 强烈 human 信号应回 human prompt', seen.some((s) => s === 'PROMPT_HAS_老网友=true'),
+    check('handleMention 强烈 human 信号应注入引擎人设', seen.some((s) => s === 'PROMPT_HAS_引擎人设=true'),
+      `seen: ${seen.filter((s) => s.startsWith('PROMPT_')).join(' | ')}`);
+    check('handleMention 人设含李乐儿', seen.some((s) => s === 'PROMPT_HAS_李乐儿=true'),
       `seen: ${seen.filter((s) => s.startsWith('PROMPT_')).join(' | ')}`);
     check('handleMention 应有 [persona] 日志', seen.some((s) => s.startsWith('[persona]')),
       `seen前几: ${seen.slice(0, 4).join(' / ')}`);
     check('handleMention 返回 LLM 回复', /测试回复/.test(reply), `实际: ${reply.slice(0, 80)}`);
 
-    // 强制 formal 上下文: 礼貌正式请求 + 长文本 → 应回 formal prompt
+    // 强制 formal 上下文: 礼貌正式请求 + 长文本 → 应回 formal prompt (无引擎人设/李乐儿)
     const seen2 = [];
     const router2 = new Router({
-      cfg, sessions: new SessionStore({ historyMax: 5 }), pondState: { onlineUsers: new Set(), roomLog: [] }, startTime: Date.now(), api,
+      cfg, sessions: new SessionStore({ historyMax: 5 }), pondState: { onlineUsers: new Set(), roomLog: [] }, startTime: Date.now(), api, personaEngine: fakeEngine,
       log: (s) => seen2.push(s),
     }).bindLlm({
       chat: async () => '',
       agentTurn: async ({ systemPrompt }) => {
-        seen2.push('PROMPT_HAS_老网友=' + /老网友/.test(systemPrompt));
+        seen2.push('PROMPT_HAS_引擎人设=' + /引擎注入的人设/.test(systemPrompt));
         seen2.push('PROMPT_HAS_AI_助手=' + /AI 助手/.test(systemPrompt));
         return '【测试回复】';
       },
     });
     // 长文本 + 礼貌请求 → formal
     await router2.handleMention({ from: 'tom', text: '请问能不能帮我详细总结一下这个长文档的核心要点以及背景信息', isLive: true });
-    check('正式请求上下文应回 formal (无"老网友")', seen2.includes('PROMPT_HAS_老网友=false'), `seen2: ${seen2.join('|')}`);
-    check('正式请求上下文应回 formal (含"AI 助手")', seen2.includes('PROMPT_HAS_AI_助手=true'));
+    check('正式请求上下文应回 formal (无引擎人设)', seen2.includes('PROMPT_HAS_引擎人设=false'), `seen2: ${seen2.join('|')}`);
+    check('正式请求上下文应回 formal (含 AI 助手)', seen2.includes('PROMPT_HAS_AI_助手=true'));
   }
 }

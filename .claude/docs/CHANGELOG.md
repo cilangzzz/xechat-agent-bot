@@ -57,6 +57,19 @@
 - agent/: 智能体运行时、路由、工具、会话、记忆等
 - api/: API 定义与文档
 
+## 2026-08-28 —— 拟人形态 (persona) 触发器 v2: 李乐儿 + 启动动态生成人格
+
+**范围**: `agent/lib/business/persona.mjs` (新增 `createPersonaEngine` + 内置李乐儿人设) + `router.mjs` / `config.mjs` / `agent.mjs` / `test/unit/persona.mjs`
+
+**变更**:
+- 拟人 prompt 从"鱼塘老网友"改为完整的**李乐儿人设**(姓名/小名/性别/年龄/职业/家乡云南昭通/现居北京/北大本科/性格/说话风格/背景/互动规则/示例对话/输出守门)
+- **新增 `createPersonaEngine`**: 启动时异步调一次 LLM, 把李乐儿模板当种子打磨成最终人设 prompt, 落盘 `log/persona.json`, 之后 human 模式回复全部注入这份动态 prompt; 失败/未就绪自动退回内置模板
+- 新增 `/大黄鱼 persona 生成` (手动重生成) ; `/大黄鱼 persona` 现在显示引擎状态 (status/source/长度/生成时间/上次错误)
+
+**配置**: `PERSONA_NO_GENERATE` / `PERSONA_REGEN` / `PERSONA_CACHE_FILE` (叠加已有 `DISABLE_PERSONA` 等)
+
+**风险**: 低。默认开启; 关闭 `DISABLE_PERSONA=1` 重启。启动生成是 fire-and-forget, 失败不影响连接与聊天 (退回种子)。不影响 trigger.mjs 主动插话。
+
 ## 2026-08-28 —— 拟人形态 (persona) 触发器
 
 **范围**: `agent/lib/business/persona.mjs` (新增) + `router.mjs` / `config.mjs` / `agent.mjs` / `test/unit/persona.mjs` (新增)

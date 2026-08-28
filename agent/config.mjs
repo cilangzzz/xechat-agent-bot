@@ -140,6 +140,12 @@ export function loadConfig(env = process.env) {
       hourBiasHumanStart: int(env.PERSONA_LATE_HOUR_START, 0),  // 几点起偏 human (默认 0 点)
       hourBiasHumanEnd: int(env.PERSONA_LATE_HOUR_END, 7),      // 几点止偏 human (默认 7 点)
       stickinessSize: int(env.PERSONA_STICKINESS_MAX, 200),     // 黏性 FIFO 上限
+      // —— 人设 prompt 引擎 (启动时调 LLM 生成"李乐儿"人格, 动态注入 human 模式) ——
+      generate: !bool(env.PERSONA_NO_GENERATE), // PERSONA_NO_GENERATE=1 不调 LLM, 用内置李乐儿模板
+      regen: bool(env.PERSONA_REGEN),           // PERSONA_REGEN=1 启动强制重生成 (忽略缓存)
+      cacheFile: env.PERSONA_CACHE_FILE || path.join(__dirname, 'log', 'persona.json'), // 生成结果落盘 (下次启动复用)
+      // —— 人设种子文件 (override 默认李乐儿, 用于临时试不同人格 / 测试) ——
+      seedFile: env.PERSONA_SEED_FILE || null, // 文件路径; 设置后用此文件内容当种子+base, 不走李乐儿
     },
 
     // —— LLM (DeepSeek, OpenAI 兼容) ——

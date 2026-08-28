@@ -152,6 +152,10 @@ export class WsClient {
       this.loggedIn = false;
       this.loginRejected = false;
       let liveSince = 0, lastData = Date.now();
+      // 续费心跳: HEARTBEAT 服务端不返回任何包, 单纯"入站数据"判定会把安静的鱼塘误判为僵死。
+      // 这里额外追踪"心跳最后一次成功写入 socket"的时间, 看门狗只要写入 OK 就视连接存活,
+      // 真正死链 (sock.destroyed / 写入失败 / 收不到任何回报) 才触发重连。
+      let lastHeartbeatOk = 0;
       let hb = null, watchdog = null;
 
       const finish = (why) => {
@@ -215,7 +219,10 @@ export class WsClient {
             pluginVersion: '', reconnected: false,
           });
           hb = setInterval(() => {
-            try { this.sendText(JSON.stringify({ action: 'HEARTBEAT' })); } catch (e) {}
+            try {
+              this.sendText(JSON.stringify({ action: 'HEARTBEAT' }));
+              lastHeartbeatOk = Date.now(); // 续费心跳: 只要写入没抛, 就当作这一轮存活信号
+            } catch (e) {}
           }, this.opts.heartbeatMs);
           this._timers.push(hb);
         }
@@ -255,9 +262,18 @@ export class WsClient {
       });
       sock.on('error', (e) => { if (!this.loginRejected) this.log(`[-] socket: ${e.code}`); finish('sock-error'); });
       sock.on('close', () => { finish('closed'); });
-      // 存活看门狗: 90s 无任何数据则判定连接僵死, 主动重连(避免静默死连接)
+      // 存活看门狗: 续费心跳版
+      //   - "入站数据"超 staleTimeoutMs 是必要条件之一 (避免对端真死时一直自欺)
+      //   - "心跳写入"超 staleTimeoutMs 才是真正僵死的标志 (HEARTBEAT 服务端不回, 不能光靠入站数据判定)
+      //   - 两个都满足才触发重连 —— 安静的鱼塘不再误判
       watchdog = setInterval(() => {
-        if (Date.now() - lastData > this.opts.staleTimeoutMs) { this.log(`[-] ${this.opts.staleTimeoutMs / 1000}s 无数据, 判定连接僵死, 重连`); finish('stale'); }
+        const now = Date.now();
+        const staleData = (now - lastData) > this.opts.staleTimeoutMs;
+        const staleHb = (now - lastHeartbeatOk) > this.opts.staleTimeoutMs;
+        if (staleData && staleHb) {
+          this.log(`[-] ${this.opts.staleTimeoutMs / 1000}s 无入站数据 + 心跳写入停滞, 判定连接真僵死, 重连`);
+          finish('stale');
+        }
       }, 30000);
       this._timers.push(watchdog);
     });

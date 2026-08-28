@@ -269,7 +269,7 @@ JSONL 每行:
 
 `@ 提及` 聊天时, 决定用哪一套"人设"回复:
 - **`MODE_FORMAL`** (默认) — `main` agent 的 `AI 助手腔` (礼貌 / 准确 / 工具清单)
-- **`MODE_HUMAN`** — `鱼塘老网友腔` (短句 / 玩梗 / 阴阳怪气 / 像群里泡久了的鱼)
+- **`MODE_HUMAN`** — `李乐儿` 人设腔 (25岁 / 北大 / 云南昭通 / 视频策划 / 摄影师, 短句 / 玩梗 / 阴阳怪气 / 像群里泡久了的姑娘)
 
 两条路会拼出**完全不同的 system prompt**, 然后走同一个 `chatView()` (空工具) 的 `llm.agentTurn`。
 与 `trigger.mjs` (主动插话) 互补: 那条路是旁观找茬, 这条路是被 @ 后的回应者。
@@ -282,7 +282,8 @@ JSONL 每行:
 | `createPersonaTrigger({enabled, defaultMode, tieMargin, hourBiasHumanRanges, roomWindowSize, maxStickiness, log})` | 工厂 | 返回 `{analyze, reset, snapshot, getStickiness}` |
 | `pickPersona(text, from, ctx)` | `(text, from, {lastModeByUser, roomLog, tieMargin, defaultMode, ...})` | 直接打分; 不写入黏性 |
 | `scoreMessage(text, {hourBias, isLateHour, now})` | — | 只算文本特征基础分 (测试用) |
-| `getHumanSystemPrompt()` | → string | 鱼塘老网友 system prompt |
+| `getHumanSystemPrompt()` | → string | 内置 BASE_PERSONA_PROMPT (李乐儿种子) |
+| **`createPersonaEngine({enabled, llm, log, cacheFile, regen, minLength, basePrompt, seed})`** | 工厂 | 启动时调 LLM 生成/加载人设 prompt; 返回 `{init, getPrompt, getMeta, regenerate}` |
 
 ### 触发评分 — 4 路信号, 总分高者胜出
 
@@ -301,20 +302,37 @@ JSONL 每行:
 
 `tieMargin` (默认 0.15) 内算平局: 平局优先沿用用户黏性 → 再退到 `defaultMode`。
 
-### 调试入口
+### 人设 prompt 引擎 (createPersonaEngine) — 动态注入
 
-`/大黄鱼 persona` —— 打印开关/默认/最近 10 条黏性。
-`/大黄鱼 persona 测试 <文本>` —— 看任意文本会被打几分、判哪个人设。
-`/大黄鱼 persona 重置 [用户]` —— 清空黏性 (便于重新观察)。
-每次触发都会在 `agent.log` 写一行 `[persona] <user> → <mode> (<reason>)`。
+`human` 模式的 system prompt **不是静态的**。启动时:
 
-### 配置项 (`config.persona`)
+1. **缓存优先** (`PERSONA_REGEN=0` 默认): 若 `log/persona.json` 存在且 ≥100 字, 直接加载。
+2. **调 LLM 生成** (否则): 用内置 `BASE_PERSONA_PROMPT` (李乐儿模板) 当种子, 让 LLM 当"人设工程师"打磨出一份最终人设 prompt (`PERSONA_GENERATOR_SYSTEM` 强制要求: 保留所有事实, 改写措辞, 加 1-3 条小习惯, 严守互动规则)。
+3. **落盘缓存**: 生成结果写入 `log/persona.json`, 下次启动复用。
+4. **失败兜底**: LLM 抛错 / 超时 / 返回过短 → 用 `BASE_PERSONA_PROMPT` (李乐儿模板), 不阻塞聊天。
+
+`getPrompt()` 任何时候返回当前生效的人设 prompt。**生成完成前 = 种子, 生成完成 = AI 打磨版, 失败 = 种子**。agent.mjs 在 WS 连接之前 fire-and-forget 调 `init()`, 不阻塞主流程。
+
+`/大黄鱼 persona 生成` 手动重生成 (异步, 完成后写一行 log); `/大黄鱼 persona` 看当前状态 (status/source/长度/生成时间/上次错误)。
+
+### 配置 (`config.persona`)
 
 - **`enabled`** = true (`DISABLE_PERSONA=1` 关掉, 一律退回 formal)
 - **`defaultMode`** = `'formal'` (`PERSONA_DEFAULT_MODE=human|formal` 平局默认)
 - **`tieMargin`** = 0.15 (`PERSONA_TIE_MARGIN`)
 - **`hourBiasHumanStart / End`** = 0 / 7 (`PERSONA_LATE_HOUR_START/END` 默认 0:00-7:00)
 - **`stickinessSize`** = 200 (`PERSONA_STICKINESS_MAX` FIFO 上限)
+- **`generate`** = true (`PERSONA_NO_GENERATE=1` 不调 LLM, 用内置种子, 离线/省 token)
+- **`regen`** = false (`PERSONA_REGEN=1` 启动强制重生成, 忽略缓存; 默认复用, 保持人格一致)
+- **`cacheFile`** = `log/persona.json` (`PERSONA_CACHE_FILE` 自定义路径)
+
+### 调试入口
+
+- `/大黄鱼 persona` — 触发器开关 / 默认 mode / 最近 10 条黏性 / 引擎 status / source / 长度 / 生成时间 / 上次错误
+- `/大黄鱼 persona 测试 <文本>` — 看任意文本会被打几分、判哪个人设
+- `/大黄鱼 persona 重置 [用户]` — 清空黏性 (便于重新观察)
+- `/大黄鱼 persona 生成` — 手动重生成 (异步; 完成时写到 agent.log)
+- 每次触发都写一行 `[persona] <user> → <mode> (<reason>)` 到 agent.log
 
 ### 坑点
 
@@ -324,6 +342,8 @@ JSONL 每行:
 4. **FIFO 淘汰用户黏性** —— 超过 `maxStickiness` 最早的用户被丢弃; 长生命周期 bot 长期积累后老用户会"失忆"
 5. **与 `trigger.mjs` 不冲突** —— trigger 是主动插话 (广播), persona 是被动回复 (定向); 都开也互不干扰
 6. **关闭时 `analyze` 一律返回 `defaultMode`** —— 不写黏性, 等于关闭整套拟人逻辑
+7. **人设 prompt 缓存跨重启复用** —— 默认 `PERSONA_REGEN=0`, 李乐儿不会每次启动都变; 想强制刷就 `PERSONA_REGEN=1`
+8. **生成失败 = 用种子** —— LLM 故障/超时/人设 prompt 被截到 <100 字, 都不会让聊天挂掉, 只是退回李乐儿种子
 
 ---
 

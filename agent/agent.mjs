@@ -14,6 +14,7 @@ import { makeReplySender } from './lib/business/reply.mjs';
 import { MemoryStore } from './lib/business/memory.mjs';
 import { Scheduler } from './lib/business/scheduler.mjs';
 import { createTrigger } from './lib/business/trigger.mjs';
+import { createPersonaEngine } from './lib/business/persona.mjs';
 import { ChatLog } from './lib/business/chat-log.mjs';
 import { uploadContent as sendupUpload } from './lib/platform/sendup.mjs';
 import { createImageGenerator } from './lib/platform/minimax-image.mjs';
@@ -110,7 +111,33 @@ function pushRoomLog(m) {
 // 领养: 多人可各领一只; 仅本次进程运行期内存记录, 重启不预恢复(领养了自然再登记)
 const adoptments = new Map(); // 领养人 -> { child }
 const client = new WsClient({ ...cfg, log });
-const router = new Router({ cfg, sessions, pondState, startTime, api, memory, adoptments, ws: client, scheduler, chatLog, sendup, minimaxImage, log }).bindLlm(llm);
+
+// —— 人设 prompt 引擎 (启动时调 LLM 把"李乐儿"种子打磨成最终人设, 动态注入 human 模式) ——
+// 不阻塞 WS 连接: init() 在后台异步跑, 在它完成前 human 模式回复仍用内置李乐儿种子。
+// 支持 PERSONA_SEED_FILE: 设置后用文件内容当种子 (替代默认李乐儿), 多用于临时试不同人格。
+function _loadPersonaSeed() {
+  const file = cfg.persona?.seedFile;
+  if (!file) return {};
+  try {
+    const t = fs.readFileSync(file, 'utf8').trim();
+    if (!t) return {};
+    return { seed: t, basePrompt: t };
+  } catch (e) {
+    log(`[!] PERSONA_SEED_FILE 读取失败, 用默认李乐儿: ${e.message}`);
+    return {};
+  }
+}
+const personaEngine = createPersonaEngine({
+  enabled: cfg.persona?.enabled !== false && cfg.persona?.generate !== false,
+  llm,
+  log,
+  cacheFile: cfg.persona?.cacheFile || null,
+  regen: !!cfg.persona?.regen,
+  ..._loadPersonaSeed(),
+});
+personaEngine.init().catch((e) => log(`[persona] 启动初始化异常: ${e.message}`));
+
+const router = new Router({ cfg, sessions, pondState, startTime, api, memory, adoptments, ws: client, scheduler, chatLog, sendup, minimaxImage, log, personaEngine }).bindLlm(llm);
 let lastReply = 0;   // 上次回复时间戳, 用于指令冷却
 // 并发: 不用全局 replying; 改为 per-user tryLock —— 不同用户可并行处理, 同一用户后续消息跳过。
 const busyUsers = new Set();
@@ -351,6 +378,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   log(`触发: "${cfg.cmdPrefix}" 开头 → ${cfg.llm.mock ? 'MOCK' : cfg.llm.model} ${cfg.llm.mock ? '' : '(LLM+tools)'} 生成回复`);
   if (cfg.owner) log(`专属模式: 只服务领养人「${cfg.owner}」, 触发前缀 "${cfg.ownerPrefix}"`);
   if (cfg.trigger.enabled) log(`主动消息: 开启(每 ${cfg.trigger.threshold} 个不同用户发言触发一次)`);
+  if (cfg.persona?.enabled !== false) {
+    const pe = personaEngine.getMeta();
+    log(`拟人形态: 开启 (人设 prompt: status=${pe.status}, source=${pe.source}, ${pe.len}字${cfg.persona?.regen ? ', 启动强制重生成' : ''})`);
+  } else {
+    log('拟人形态: 关闭');
+  }
   log(`(Ctrl+C 停止; 掉线自动重连)`);
 
   // 定时任务: 到点触发(remind=直接发文本; auto=用 LLM 按 task 生成再发)
