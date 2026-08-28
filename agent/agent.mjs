@@ -17,6 +17,8 @@ import { createTrigger } from './lib/business/trigger.mjs';
 import { ChatLog } from './lib/business/chat-log.mjs';
 import { uploadContent as sendupUpload } from './lib/platform/sendup.mjs';
 import { createImageGenerator } from './lib/platform/minimax-image.mjs';
+import { SkillRegistry } from './lib/business/skill-registry.mjs';
+import { getBuiltinSkills } from './lib/business/skills.mjs';
 
 loadDotEnv();
 // —— 命令行动态参数: node agent.mjs [登录名] [--prefix /xxx] [--owner 领养人] [--help]
@@ -85,6 +87,19 @@ const chatLog = new ChatLog({ ...cfg.chatLog, log }); // 聊天记录日志(持�
 const sendup = { ...cfg.sendup, upload: sendupUpload }; // 文件分享 (sendup.cc 三步上传, 内容驱动)
 const minimaxImage = createImageGenerator({ ...cfg.minimaxImage, proxy: cfg.proxy, log }); // MiniMax 图片生成 (文生图/图生图)
 
+// —— 技能注册表 (SkillRegistry): builtin 同步装载, user_dir/user_url 后台异步扫描 ——
+const skillRegistry = new SkillRegistry({
+  builtinSkills: getBuiltinSkills(),
+  dataDir: cfg.skills.dataDir,
+  remoteUrls: cfg.skills.remoteUrls,
+});
+cfg.skills = { ...cfg.skills, registry: skillRegistry }; // Router/tools 通过 ctx.skills.registry 取
+// 后台异步加载 (本地目录 + 远程仓库), 不阻塞 boot
+(async () => {
+  try { await skillRegistry.init(); log(`[i] 技能注册完成: ${skillRegistry.all().length} 个 (builtin + 用户 + 远程)`); }
+  catch (e) { log(`[!] 技能注册失败: ${e.message}`); }
+})();
+
 // 聊天记录环形缓冲: 只记连接后当前会话收到的消息, 不回溯历史
 function pushRoomLog(m) {
   const max = cfg.roomLog.maxEntries || 100;
@@ -95,7 +110,7 @@ function pushRoomLog(m) {
 // 领养: 多人可各领一只; 仅本次进程运行期内存记录, 重启不预恢复(领养了自然再登记)
 const adoptments = new Map(); // 领养人 -> { child }
 const client = new WsClient({ ...cfg, log });
-const router = new Router({ cfg, sessions, pondState, startTime, api, memory, adoptments, ws: client, scheduler, chatLog, sendup, minimaxImage }).bindLlm(llm);
+const router = new Router({ cfg, sessions, pondState, startTime, api, memory, adoptments, ws: client, scheduler, chatLog, sendup, minimaxImage, log }).bindLlm(llm);
 let lastReply = 0;   // 上次回复时间戳, 用于指令冷却
 // 并发: 不用全局 replying; 改为 per-user tryLock —— 不同用户可并行处理, 同一用户后续消息跳过。
 const busyUsers = new Set();

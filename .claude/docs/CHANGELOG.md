@@ -57,6 +57,16 @@
 - agent/: 智能体运行时、路由、工具、会话、记忆等
 - api/: API 定义与文档
 
+## 2026-08-28 —— 拟人形态 (persona) 触发器
+
+**范围**: `agent/lib/business/persona.mjs` (新增) + `router.mjs` / `config.mjs` / `agent.mjs` / `test/unit/persona.mjs` (新增)
+
+**能力**: `@ 提及` 聊天新增"拟人形态"——根据 4 路信号 (文本特征 / 时间偏好 / 用户黏性 / 房间氛围) 自动在 `AI 助手腔`(formal) 与 `鱼塘老网友腔`(human) 之间切换回复人设。配套 `/大黄鱼 persona` 内置命令 (查询 / 测试 / 重置) 与 `[persona]` 调试日志。
+
+**配置**: `DISABLE_PERSONA` / `PERSONA_DEFAULT_MODE` / `PERSONA_TIE_MARGIN` / `PERSONA_LATE_HOUR_START|END` / `PERSONA_STICKINESS_MAX`
+
+**风险**: 低。默认开启 (与 main 默认行为叠加); 关闭只需 `DISABLE_PERSONA=1` 重启。不影响主动消息触发器 (trigger.mjs) 与领养/专属模式。
+
 ## 风险评估说明
 
 - 项目处于"初始导入"阶段, 单一一次性 commit

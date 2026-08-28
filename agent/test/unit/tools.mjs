@@ -22,7 +22,7 @@ export async function run() {
   console.log('[2] ToolRegistry(v2) 注册/派发/新工具');
   {
     const reg = makeRegistry();
-    check('内置工具已注册', ['now', 'uptime', 'room_stats', 'session_stats', 'python', 'web_search', 'fetch_url', 'gold_price', 'games', 'game_detail', 'leaderboard', 'create_room', 'close_room', 'list_rooms', 'delegate', 'todo_list', 'todo_update', 'remember', 'recall', 'skill'].every((n) => reg.list().includes(n)));
+    check('内置工具已注册', ['now', 'uptime', 'room_stats', 'session_stats', 'python', 'web_search', 'fetch_url', 'gold_price', 'games', 'game_detail', 'leaderboard', 'create_room', 'close_room', 'list_rooms', 'delegate', 'todo_list', 'todo_update', 'remember', 'recall', 'skill_list', 'skill_get', 'skill_install_from_url', 'skill_uninstall', 'skill_search'].every((n) => reg.list().includes(n)));
     check('room_stats 返回在线数', (await reg.dispatch('room_stats', {})).online_count === 2);
     check('games 工具查询游戏列表', (async () => { const r = await reg.dispatch('games', {}); return r.total === 1 && r.games[0].name === 'demo'; })());
     check('game_detail 工具查详情', (async () => { const r = await reg.dispatch('game_detail', { id: 1 }); return r.zhName === '演示' && r.downloadUrl === '/api/file/download/1'; })());
@@ -35,18 +35,29 @@ export async function run() {
     check('filter 按白名单过滤', (() => { const v = reg.filter(['python', 'now']); return v.list().length === 2 && !v.has('web_search'); })());
   }
 
-  // —— 2b. 技能包工具 ——
+  // —— 2b. 技能包工具 (拆分: skill_list / skill_get / skill_install / skill_search) ——
   console.log('[2b] skill 技能包');
   {
     const reg = makeRegistry();
-    const r = await reg.dispatch('skill', { name: 'report' });
-    check('skill 加载 report 返回指令', r.loaded === 'report' && /报告/.test(r.instruction));
-    const bad = await reg.dispatch('skill', { name: '不存在的' });
+    // skill_list
+    const list = await reg.dispatch('skill_list', {});
+    check('skill_list 返回 builtin', list.count >= 8 && list.skills.some((s) => s.name === 'report'));
+    const verbose = await reg.dispatch('skill_list', { verbose: true });
+    check('skill_list verbose 带 location/source', verbose.skills[0].location === '<builtin>' && verbose.skills[0].source === 'builtin');
+    // skill_get
+    const r = await reg.dispatch('skill_get', { name: 'report' });
+    check('skill_get 加载 report 返回指令', r.loaded === 'report' && /报告/.test(r.instruction));
+    const bad = await reg.dispatch('skill_get', { name: '不存在的' });
     check('未知技能报错', /未知技能/.test(bad.error));
+    // skills 模块 getSkill (旧 API 兼容)
     check('skills 模块 getSkill', getSkill('analyze').name === 'analyze');
     const news = getSkill('news_roundup');
     check('news_roundup skill', news && /fetch_url/.test(news.instructions) && /web_search/.test(news.instructions));
     check('trending skill', getSkill('trending') && /趋势/.test(getSkill('trending').description));
+    // skill_search 注册 + 调用 (dataDir=null 测试用空目录兜底, 不强求有命中)
+    const sr = await reg.dispatch('skill_search', { pattern: 'report' });
+    check('skill_search 注册并返回 (matches 数组存在)', Array.isArray(sr.matches) && sr.backend === 'rg' || sr.backend === 'node');
+    check('skill_search 返回 backend 字段', !!sr.backend && sr.matches !== undefined);
   }
 
   // —— 2c. 待办工具 ——

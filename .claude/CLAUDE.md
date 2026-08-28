@@ -72,8 +72,9 @@
 | [lib/todo.mjs](agent/lib/todo.mjs) | 每会话待办 | [README](.claude/docs/business/README.md) |
 | [lib/scheduler.mjs](agent/lib/scheduler.mjs) | 定时任务 | [README](.claude/docs/business/README.md) |
 | [lib/chat-log.mjs](agent/lib/chat-log.mjs) | 聊天日志 (JSONL 持久化) | [README](.claude/docs/business/README.md) |
-| [lib/trigger.mjs](agent/lib/trigger.mjs) | 主动消息触发器 (默认关) | [README](.claude/docs/business/README.md) |
-| [lib/web.mjs](agent/lib/web.mjs) | 联网搜索 / 抓 URL / 金价 | [README](.claude/docs/business/README.md) |
+| [lib/trigger.mjs](agent/lib/business/trigger.mjs) | 主动消息触发器 (默认关) | [README](.claude/docs/business/README.md) |
+| [lib/persona.mjs](agent/lib/business/persona.mjs) | 拟人形态触发器 (@ 提及的 人设切换: AI 助手腔 vs 鱼塘老网友腔) | [README](.claude/docs/business/README.md) |
+| [lib/web.mjs](agent/lib/business/web.mjs) | 联网搜索 / 抓 URL / 金价 | [README](.claude/docs/business/README.md) |
 | [lib/python-runner.mjs](agent/lib/python-runner.mjs) | Python 执行器 (沙箱) | [README](.claude/docs/business/README.md) |
 | [lib/sendup.mjs](agent/lib/sendup.mjs) | sendup.cc 文件分享 | [README](.claude/docs/business/README.md) |
 | [lib/xechat-api.mjs](agent/lib/xechat-api.mjs) | 鱼塘平台 API 客户端 | [README](.claude/docs/business/README.md) |

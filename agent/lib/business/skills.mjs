@@ -1,6 +1,37 @@
 // 鱼塘 agent 智能体 —— 技能包 (references: opencode skill 机制)
-// 命名的工作流指令包: LLM 通过 `skill` 工具加载某个技能后, 指令进入上下文,
+// 命名的工作流指令包: LLM 通过 skill_get 工具加载某个技能后, 指令进入上下文,
 // 后续回答就按该技能的工作流执行 —— 类似于 /大黄鱼 加技能前缀。
+//
+// 多源: builtin (代码内置) + user_dir (本地 data/skills/) + user_url (远程仓库).
+// 见 skill-registry.mjs 实现。SKILLS 常量保留作 BUILTIN 源 + 旧 API 兼容。
+
+// —— 把 SKILLS 常量转为 SkillInfo 形状 (供 SkillRegistry._builtin 用) ——
+export function getBuiltinSkills() {
+  /** @type {Map<string, {name:string, description:string, content:string, location:string}>} */
+  const m = new Map();
+  for (const [name, s] of Object.entries(SKILLS)) {
+    m.set(name, {
+      name,
+      description: s.description,
+      content: s.instructions,
+      location: '<builtin>',
+    });
+  }
+  return m;
+}
+
+/** 已弃名: 建议用 SkillRegistry.all().map(s => `- ${s.name}: ${s.description}`) */
+export function listSkills() {
+  return Object.entries(SKILLS).map(([name, s]) => `- ${name}: ${s.description}`);
+}
+
+/** 已弃名: 建议用 SkillRegistry.get(name) */
+export function getSkill(name) {
+  const s = SKILLS[name];
+  return s ? { name, description: s.description, instructions: s.instructions } : null;
+}
+
+// 保留原 SKILLS 常量(旧代码 + router 命令会用到),新逻辑迁移到 SkillRegistry
 export const SKILLS = {
   report: {
     description: '生成结构化研究报告/总结报告: 先搜资料→提炼要点→按 背景/结论/详述/来源 组织',
@@ -83,11 +114,5 @@ export const SKILLS = {
   },
 };
 
-export function listSkills() {
-  return Object.entries(SKILLS).map(([name, s]) => `- ${name}: ${s.description}`);
-}
-
-export function getSkill(name) {
-  const s = SKILLS[name];
-  return s ? { name, description: s.description, instructions: s.instructions } : null;
-}
+// === 保留原始 export 顺序以兼容旧 import ===
+// (原 listSkills/getSkill 已上方重新声明)

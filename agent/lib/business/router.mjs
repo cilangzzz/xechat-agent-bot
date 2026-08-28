@@ -14,6 +14,10 @@ import { SubagentDelegate } from './subagent.mjs';
 import * as todoHelpers from './todo.mjs';
 import { listSkills } from './skills.mjs';
 import * as schedMod from './scheduler.mjs';
+import {
+  MODE_FORMAL, MODE_HUMAN,
+  createPersonaTrigger, getHumanSystemPrompt,
+} from './persona.mjs';
 
 /** 解析一条消息: 是否命中前缀 */
 export function parseCommand(text, prefix) {
@@ -58,6 +62,8 @@ const DEFAULT_CFG = {
   python: { cmd: 'python', timeoutMs: 15000 },
   web: { enabled: true },
   adopt: { enabled: false },
+  // 拟人触发器 (@ 提及回复的"AI 助手腔 vs 鱼塘老网友腔"切换)
+  persona: { enabled: true, defaultMode: 'formal', tieMargin: 0.15 },
 };
 
 export class Router {
@@ -77,6 +83,17 @@ export class Router {
 
     // 子智能体委托通道 (委托逻辑在 subagent.mjs)
     this.subagent = new SubagentDelegate(this);
+
+    // 拟人触发器 (@ 提及 chat 的"AI 助手腔 vs 鱼塘老网友腔"切换)
+    this.persona = createPersonaTrigger({
+      enabled: this.cfg.persona?.enabled !== false,
+      defaultMode: this.cfg.persona?.defaultMode === MODE_HUMAN ? MODE_HUMAN : MODE_FORMAL,
+      tieMargin: this.cfg.persona?.tieMargin ?? 0.15,
+      maxStickiness: this.cfg.persona?.stickinessSize || 200,
+      hourBiasHumanRanges: this.cfg.persona
+        ? [{ start: Number(this.cfg.persona.hourBiasHumanStart || 0), end: Number(this.cfg.persona.hourBiasHumanEnd || 7) }]
+        : [{ start: 0, end: 7 }],
+    });
 
     this.tools = createRegistry({
       startTime: deps.startTime,
@@ -103,7 +120,7 @@ export class Router {
     this._summarize = null; // 摘要函数 (bindLlm 时注入)
 
     this.builtin = {
-      help: () => `可用指令:\n${this.tools.describe()}\n子智能体: /${this.cfg.cmdPrefix} explore <问题> · math <算式>\n用法: ${this.cfg.cmdPrefix} <问题或指令>`,
+      help: () => `可用指令:\n${this.tools.describe()}\n子智能体: /${this.cfg.cmdPrefix} explore <问题> · math <算式>\n拟人: /${this.cfg.cmdPrefix} persona [测试 <文本> | 重置 [用户]]\n用法: ${this.cfg.cmdPrefix} <问题或指令>`,
       tools: () => this.tools.describe(),
       agents: () => '子智能体:\n- explore: 联网/平台调研\n- math: python 计算\n显式调用: /大黄鱼 explore <问题> · /大黄鱼 math <算式>',
       ping: () => 'pong 🎣',
@@ -111,6 +128,8 @@ export class Router {
         const p = this.pondState;
         return `当前在线 ${p.onlineUsers.size} 人: ${[...p.onlineUsers].join(', ') || '(暂无)'}`;
       },
+      // —— 拟人触发器 (查询/重置) ——
+      persona: async (arg, { from }) => this._personaCmd(arg, from),
       stats: () => {
         const p = this.pondState;
         return `鱼塘现状: 在线 ${p.onlineUsers.size} 人 (${[...p.onlineUsers].slice(0, 8).join(', ')}${p.onlineUsers.size > 8 ? '...' : ''}); 对话会话 ${this.sessions.size} 个; 待办/压缩等能力已开启`;
@@ -290,6 +309,8 @@ export class Router {
    * @ 提及聊天: 只聊天, 不触发命令/工具/应用查询。
    * 上下文独立于命令会话(chat: 前缀); 用无工具 agentTurn 回复, 长文照样分片。
    * @ 聊天是纯对话, 不输出「💭 好的，开始处理…」等思考提示(只在会调工具的指令模式发)。
+   * 拟人触发器: 同一条 @ 提及会根据文本/时间/用户黏性/房间氛围, 决定用 "AI 助手腔"(formal)
+   * 还是 "鱼塘老网友腔"(human) 两种人设之一。
    * @param {object} ctx { from, text, isLive, onThinking }
    * @returns {Promise<string>} 聊天回复
    */
@@ -302,7 +323,8 @@ export class Router {
     this.sessions.pushUser(key, chatText);
     if (this._summarize) await this.sessions.maybeCompress(key, this._summarize);
     const snap = this.sessions.get(key);
-    const sys = this._buildChatSystemPrompt(snap.summary);
+    const decision = this.persona.analyze(chatText, from, this.pondState && this.pondState.roomLog);
+    const sys = this._buildChatSystemPrompt(snap.summary, decision.mode);
     let reply;
     try {
       reply = await this.llm.agentTurn({
@@ -316,6 +338,10 @@ export class Router {
       reply = '嗯, 我在听。';
     }
     this.sessions.pushAssistant(key, reply);
+    // 调试日志: 把本轮的触发器决策记进 agent.log, 方便验证人设切换是否合理
+    if (this.deps && this.deps.log) {
+      this.deps.log(`[persona] ${from} → ${decision.mode} (${decision.reason})`);
+    }
     return reply;
   }
 
@@ -324,10 +350,33 @@ export class Router {
     return this.tools.filter([]);
   }
 
-  /** @ 聊天系统提示词: 纯对话人设, 不带工具清单与命令说明 */
-  _buildChatSystemPrompt(summary = '') {
+  /** @ 聊天系统提示词: 纯对话人设, 不带工具清单与命令说明
+   * @param {string} [summary] 历史摘要
+   * @param {'formal'|'human'} [mode=MODE_FORMAL] 拟人触发器选定的人设
+   */
+  _buildChatSystemPrompt(summary = '', mode = MODE_FORMAL) {
     const def = getAgent('main');
     const env = buildEnvironment({ cfg: this.cfg, pondState: this.pondState, sessions: this.sessions });
+    if (mode === MODE_HUMAN) {
+      // 鱼塘老网友 1-on-1 @ 提及人设: 单独的 system prompt, 不叠 main agent 的助手提示
+      const human = getHumanSystemPrompt();
+      // 给点房间上下文, 让大黄鱼知道现场氛围(不是要复述)
+      const roomTail = (this.pondState && Array.isArray(this.pondState.roomLog))
+        ? this.pondState.roomLog.slice(-6).map((m) => `${m.from}: ${String(m.content || '').slice(0, 80)}`).join('\n')
+        : '';
+      const parts = [
+        env,
+        human,
+        roomTail ? `\n## 房间最近氛围(给你背景, 不要直接复述)\n${roomTail}` : '',
+        '\n## 回复守门',
+        '· 短 (80 字内), 不端架子, 不暴露 AI 身份',
+        '· 可接梗/跟评/阴阳/怼, 按对面的人挑, 不当和事佬',
+        '· 不列条目不加粗不滥用 emoji',
+      ];
+      const sys = parts.filter(Boolean).join('\n');
+      return summary ? `${sys}\n\n[之前的对话摘要]\n${summary}` : sys;
+    }
+    // formal: 沿用原本的 main agent 闲聊模式
     const sys = buildSystemPrompt({ agent: { ...def, extra: '@ 提及对话模式: 只闲聊与答疑, 不调用工具、不做平台查询, 用你的常识与已有上下文回答。' }, env, toolList: [], cfg: this.cfg });
     return summary ? `${sys}\n\n[之前的对话摘要]\n${summary}` : sys;
   }
@@ -410,6 +459,31 @@ export class Router {
     const n = Math.min(20, Math.max(1, parseInt(String(arg || '10').trim(), 10) || 10));
     const items = log.slice(-n);
     return `最近 ${items.length} 条消息:\n` + items.map((m) => `${m.self ? '我' : m.from}: ${String(m.content).slice(0, 60)}`).join('\n');
+  }
+
+  // —— 拟人触发器: 查询 / 重置 / 试跑 —— //
+  _personaCmd(arg, from) {
+    const persona = this.persona;
+    if (!persona) return '拟人触发器未初始化。';
+    const rest = String(arg || '').trim();
+    // /大黄鱼 persona                  → 总体状态 + 默认 mode
+    // /大黄鱼 persona 测试 <文本>      → 给个样本, 看触发结果
+    // /大黄鱼 persona 重置 [用户]      → 清某用户黏性
+    if (/^重置\s*(\S*)$/.test(rest)) {
+      const who = (RegExp.$1 || '').trim();
+      if (who) { persona.reset(who); return `已重置 ${who} 的拟人触发器黏性。`; }
+      persona.reset(); return '已重置全部拟人触发器黏性。';
+    }
+    const testMatch = rest.match(/^测试\s*([\s\S]*)$/);
+    if (testMatch) {
+      const sample = (testMatch[1] || '').trim() || '(空)';
+      const r = persona.analyze(sample, from || 'test_user', this.pondState && this.pondState.roomLog);
+      const sig = (r.score.signals || []).map((s) => `  · ${s.side}+${s.weight} (${s.reason})`).join('\n');
+      return `文本: ${sample}\n判定: ${r.mode} (${r.reason})\nhuman=${r.score.human} formal=${r.score.formal}\n${sig || '  (无信号)'}`;
+    }
+    const snap = persona.snapshot();
+    const sticky = (snap.stickiness || []).slice(-10).map(([u, m]) => `  · ${u} → ${m}`).join('\n') || '  (空)';
+    return `拟人触发器: ${snap.enabled ? '开启' : '关闭'}, 默认=${snap.defaultMode}\n最近黏性:\n${sticky}`;
   }
 
   // —— 聊天记录日志命令(持久化, 跨重启可查) ——

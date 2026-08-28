@@ -128,11 +128,14 @@ agent/
 - **当前会话聊天记录**: `recent_messages` 工具 / `/小黄鱼 最近消息 [N]`,只返回**这次连接后**收到的消息(环形缓冲,默认 100 条,不回溯历史,内存)。
 - **聊天记录日志**: `chat_log` 工具 / `/小黄鱼 聊天记录 [N]`,把所有聊天消息**落盘到 `data/chat-log.jsonl`**(JSONL,默认保留 1000 条),**跨重启可查**更早历史。`DISABLE_CHAT_LOG=1` 关闭,`CHAT_LOG_FILE`/`CHAT_LOG_MAX` 可调。
 - **主动消息触发器**: 每累计 `TRIGGER_THRESHOLD`(默认 10)条**非自己**的消息,agent 理解这批消息,主动(非回复)发出一条观点鲜明/有争议性的广播,然后重置计数 + 冷却。默认 `ENABLE_TRIGGER=0`(主动发言有刷屏风险,需显式开启)。
+- **拟人形态触发器 (persona)**: `@ 提及` 聊天时按 4 路信号(文本特征 / 时间偏好 / 用户黏性 / 房间氛围)自动在 `AI 助手腔` 与 `鱼塘老网友腔` 之间切换回复人设,让机器人在群里更像人。默认开启,`DISABLE_PERSONA=1` 关闭;调试用 `/小黄鱼 persona`(查询/测试/重置)。详见 `.claude/docs/business/peripheral.md` §5.5。
 - **文件分享(sendup.cc, 内容驱动)**: `send_file({content, filename, is_binary?, mime_type?, password?, expire_minutes?})` 工具 —— **不读本地文件**,而是把 agent 在聊天里产生的内容(爬到的长文整理成的 `.md`、截图/图表的 base64、代码/数据)发出去。三步: `api_get_upload_url.php` 拿预签名 → PUT 到 Cloudflare R2 → `api_save_upload.php` 落 metadata 拿分享链接。可设访问密码与有效期(默认 1440 分钟=24h)。最大 50MB(`SENDUP_MAX_BYTES` 调)。⚠ 鱼塘聊天是**广播**(只带目标标记),非真私密 —— 即便设密码,链接分享给谁就谁能下;敏感内容别用。`DISABLE_SENDUP=1` 关闭,`SENDUP_TIMEOUT_MS` 调单次超时。
 
 **@ 提及聊天**: 消息里 `@小黄鱼 …`(或协议 `toUsers` 定向)会触发响应,但**只聊天** —— 纯 LLM 对话、
 不触发确定性命令、不调用工具、不做平台/应用查询,上下文独立于命令会话(`chat:` 前缀)。
 可用于闲聊、答疑而不打乱命令上下文。`DISABLE_MENTION=1` 关闭。
+
+**@ 提及的"拟人"模式**: 同上, 但回复人设按`persona 触发器`自动切换 —— 短闲聊/俚语/深夜 → 鱼塘老网友腔; 长文/礼貌请求/技术问题 → AI 助手腔。详见上面"拟人形态触发器"条目。
 
 ## 快速开始
 

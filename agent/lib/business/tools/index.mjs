@@ -1,6 +1,5 @@
 // agent 工具注册表 —— 聚合入口 (lib/business/tools/)
-// 每个分类单独一个文件(state / compute / web / platform / image / game /
-// delegate / todo / memory / skills / scheduler / chat / probe), 各自导出 buildXxxTools(ctx)
+// 每个分类单独一个文件, 各自导出 buildXxxTools(ctx)
 // 返回 defineTool 对象数组。本文件只做组装, 不写业务。
 import { ToolRegistry } from '../../foundation/tool-core.mjs';
 import { buildStateTools } from './state.mjs';
@@ -11,7 +10,10 @@ import { buildGameTools } from './game.mjs';
 import { buildDelegateTools } from './delegate.mjs';
 import { buildTodoTools } from './todo.mjs';
 import { buildMemoryTools } from './memory.mjs';
-import { buildSkillsTools } from './skills.mjs';
+import { buildSkillListTools } from './skill-list.mjs';
+import { buildSkillGetTools } from './skill-get.mjs';
+import { buildSkillInstallTools } from './skill-install.mjs';
+import { buildSkillSearchTools } from './skill-search.mjs';
 import { buildSchedulerTools } from './scheduler.mjs';
 import { buildChatTools } from './chat.mjs';
 import { buildProbeTools } from './probe.mjs';
@@ -32,11 +34,14 @@ export function createRegistry(registryCtx = {}) {
   for (const t of buildDelegateTools(ctx)) reg.register(t);
   for (const t of buildTodoTools(ctx)) reg.register(t);
   for (const t of buildMemoryTools(ctx)) reg.register(t);
-  for (const t of buildSkillsTools(ctx)) reg.register(t);
+  // —— 技能包 (拆分 4 个工具: list/get/install+uninstall/search) ——
+  for (const t of buildSkillListTools(ctx)) reg.register(t);
+  for (const t of buildSkillGetTools(ctx)) reg.register(t);
+  for (const t of buildSkillInstallTools(ctx)) reg.register(t);
+  for (const t of buildSkillSearchTools(ctx)) reg.register(t);
   for (const t of buildSchedulerTools(ctx)) reg.register(t);
   for (const t of buildChatTools(ctx)) reg.register(t);
   for (const t of buildProbeTools(ctx)) reg.register(t);
-  for (const t of buildImageTools(ctx)) reg.register(t);
 
   // 已废弃: send_file (由 upload_image 替代)。代码保留在 git 历史里;
   // 如确需 password/expiry 等 sendup.cc 特性, 可在未来重新从 git history 提取。

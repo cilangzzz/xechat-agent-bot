@@ -159,6 +159,6 @@ ROOM_CLOSE         (msgType=ROOM_CLOSE) ──► pondState.activeRooms.delete(i
 - [tools.md](./tools.md) — 工具注册表: 全量工具分类清单 / budget / 新增工具 checklist
 - [multi-agent.md](./multi-agent.md) — 多智能体定义 / delegate 工具 / 显式指令 / 新增子智能体 checklist
 - [skills.md](./skills.md) — 技能包 SKILLS 表 / 加载流程 / 新增技能 checklist
-- [peripheral.md](./peripheral.md) — 周边工具: todo / memory / scheduler / chat-log / trigger / web / python-runner / sendup / xechat-api
+- [peripheral.md](./peripheral.md) — 周边工具: todo / memory / scheduler / chat-log / trigger / **persona** / web / python-runner / sendup / xechat-api
 - [data-model.md](./data-model.md) — 业务层核心数据结构速查 (Session / pondState / 工具消息 / WS 帧)
 - [pitfalls.md](./pitfalls.md) — 坑点清单 (协议 M-* / 行为 B-* / 数据 D-* / LLM L-* / 测试 T-*)

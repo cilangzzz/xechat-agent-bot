@@ -4,6 +4,8 @@
 import { createRegistry } from '../../lib/business/tools/index.mjs';
 import { SessionStore } from '../../lib/business/sessions.mjs';
 import { XechatApi } from '../../lib/platform/xechat-api.mjs';
+import { SkillRegistry } from '../../lib/business/skill-registry.mjs';
+import { getBuiltinSkills } from '../../lib/business/skills.mjs';
 
 export function fakeApiFetch(url) {
   const respond = (obj) => ({ ok: true, json: async () => obj });
@@ -22,6 +24,15 @@ export function fakeApiFetch(url) {
 }
 
 export function makeRegistry(extra = {}) {
+  // 构造一个本地 SkillRegistry (builtin 同步装载), 给 skill_* 工具用
+  const skillRegistry = new SkillRegistry({
+    builtinSkills: getBuiltinSkills(),
+    dataDir: null, // 测试不扫盘
+    remoteUrls: [],
+  });
+  for (const [name, info] of getBuiltinSkills()) {
+    skillRegistry._all.set(name, { ...info, source: 'builtin' });
+  }
   return createRegistry({
     startTime: Date.now(),
     pondState: { onlineUsers: new Set(['a', 'b']) },
@@ -29,7 +40,7 @@ export function makeRegistry(extra = {}) {
     api: new XechatApi({ base: 'https://fake', fetchFn: fakeApiFetch }),
     python: { cmd: 'python', timeoutMs: 10000 },
     web: { enabled: true },
-    skills: { enabled: true },
+    skills: { enabled: true, registry: skillRegistry, dataDir: null, maxContentChars: 8000, grepLimit: 100 },
     todo: { maxItems: 20 },
     ...extra,
   });

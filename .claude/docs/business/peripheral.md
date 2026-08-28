@@ -1,6 +1,6 @@
 # 周边工具模块业务文档
 
-本文档覆盖 `agent/lib/` 下 9 个"周边工具"模块: todo / memory / scheduler / chat-log / trigger / web / python-runner / sendup / xechat-api。每个子模块的字段格式统一, 便于横比。
+本文档覆盖 `agent/lib/` 下 10 个"周边工具"模块: todo / memory / scheduler / chat-log / trigger / persona / web / python-runner / sendup / xechat-api。每个子模块的字段格式统一, 便于横比。
 
 ---
 
@@ -260,6 +260,70 @@ JSONL 每行:
 3. **冷却期内既不累计也不收集** —— 阈值期间窗口停滞, 可能让 bot"看起来不说话"。
 4. **触发后立即冷却** —— `lastFireAt = now`, 即使后续持续高强度聊天也只等 5 分钟。
 5. **同一人连发 N 条会一次性触发** —— 不去重发言人, 高频刷屏用户最容易引爆。
+
+---
+
+## 5.5 persona —— 拟人形态触发器 (agent/lib/persona.mjs)
+
+### 职责
+
+`@ 提及` 聊天时, 决定用哪一套"人设"回复:
+- **`MODE_FORMAL`** (默认) — `main` agent 的 `AI 助手腔` (礼貌 / 准确 / 工具清单)
+- **`MODE_HUMAN`** — `鱼塘老网友腔` (短句 / 玩梗 / 阴阳怪气 / 像群里泡久了的鱼)
+
+两条路会拼出**完全不同的 system prompt**, 然后走同一个 `chatView()` (空工具) 的 `llm.agentTurn`。
+与 `trigger.mjs` (主动插话) 互补: 那条路是旁观找茬, 这条路是被 @ 后的回应者。
+
+### 关键 API
+
+| 导出符号 | 签名 | 用途 |
+|---|---|---|
+| `MODE_FORMAL / MODE_HUMAN` | `const` | mode 常量 |
+| `createPersonaTrigger({enabled, defaultMode, tieMargin, hourBiasHumanRanges, roomWindowSize, maxStickiness, log})` | 工厂 | 返回 `{analyze, reset, snapshot, getStickiness}` |
+| `pickPersona(text, from, ctx)` | `(text, from, {lastModeByUser, roomLog, tieMargin, defaultMode, ...})` | 直接打分; 不写入黏性 |
+| `scoreMessage(text, {hourBias, isLateHour, now})` | — | 只算文本特征基础分 (测试用) |
+| `getHumanSystemPrompt()` | → string | 鱼塘老网友 system prompt |
+
+### 触发评分 — 4 路信号, 总分高者胜出
+
+| 信号 | 命中加 `human` | 命中加 `formal` | 来源 |
+|---|---|---|---|
+| **招呼** | `咋了 / 咋啦 / 在么` (+0.85) | `你好 / 您好 / hi / 在吗` (+0.85) | `GREETING_*` 正则 |
+| **长度** | 空/≤6/≤15 字 (+0.20~0.55) | 41~120 字 (+0.30) / >120 字 (+0.50) | `len()` |
+| **俚语** | `笑死 / 服了 / 好家伙 / 牛马 / 儒雅随和 / yyds / 666 / 喷粪 / 搁这` …(+0.20/处, 上限 0.55) | — | `SLANG_PATTERNS[]` |
+| **正式请求** | — | `请 / 请问 / 帮我 / 总结 / 翻译 / 分析 / 解释 / 代码 / bug / 怎么 / 如何` …(+0.20/处, 上限 0.65) | `FORMAL_PATTERNS[]` |
+| **emoji 密度** | ≥3 个 (+0.35) / 2 个 (+0.15) | — | unicode range |
+| **标点** | `!!` / `??` (+0.10~0.15) | — | regex |
+| **结构** | — | 列表/编号体 (+0.30) | regex |
+| **时间偏好** | 凌晨 00-07 点 (+0.15) | 工作时段 9-18 点 (+0.05) | `hour` |
+| **用户黏性** | 同用户上一轮 `human` (+0.20) | 同用户上一轮 `formal` (+0.20) | `lastModeByUser` Map |
+| **房间氛围** | 最近 N 条俚语占比 ≥50% (+0.20) / ≥20% (+0.08) | — | `roomLog` |
+
+`tieMargin` (默认 0.15) 内算平局: 平局优先沿用用户黏性 → 再退到 `defaultMode`。
+
+### 调试入口
+
+`/大黄鱼 persona` —— 打印开关/默认/最近 10 条黏性。
+`/大黄鱼 persona 测试 <文本>` —— 看任意文本会被打几分、判哪个人设。
+`/大黄鱼 persona 重置 [用户]` —— 清空黏性 (便于重新观察)。
+每次触发都会在 `agent.log` 写一行 `[persona] <user> → <mode> (<reason>)`。
+
+### 配置项 (`config.persona`)
+
+- **`enabled`** = true (`DISABLE_PERSONA=1` 关掉, 一律退回 formal)
+- **`defaultMode`** = `'formal'` (`PERSONA_DEFAULT_MODE=human|formal` 平局默认)
+- **`tieMargin`** = 0.15 (`PERSONA_TIE_MARGIN`)
+- **`hourBiasHumanStart / End`** = 0 / 7 (`PERSONA_LATE_HOUR_START/END` 默认 0:00-7:00)
+- **`stickinessSize`** = 200 (`PERSONA_STICKINESS_MAX` FIFO 上限)
+
+### 坑点
+
+1. **中文没有 `\b`** —— `SLANG_PATTERNS` 用 substring 匹配, 别加 `\b` (会匹配不到中文)
+2. **招呼 + 长度信号会冲突** —— `scoreMessage` 里招呼信号**先判**且**跳过长度权重**, 避免 "你好" 被长度偏见盖过
+3. **用户黏性会双向粘** —— 同一人上一轮什么 mode, 本轮 +0.20 该 mode (防止风格跳变), 但本轮文本强烈反向也能覆盖
+4. **FIFO 淘汰用户黏性** —— 超过 `maxStickiness` 最早的用户被丢弃; 长生命周期 bot 长期积累后老用户会"失忆"
+5. **与 `trigger.mjs` 不冲突** —— trigger 是主动插话 (广播), persona 是被动回复 (定向); 都开也互不干扰
+6. **关闭时 `analyze` 一律返回 `defaultMode`** —— 不写黏性, 等于关闭整套拟人逻辑
 
 ---
 

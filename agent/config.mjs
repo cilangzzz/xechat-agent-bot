@@ -80,9 +80,15 @@ export function loadConfig(env = process.env) {
       maxItems: int(env.TODO_MAX, 20), // 每会话最大待办条数
     },
 
-    // —— 技能包 (skill 工具, 参考 opencode skill) ——
+    // —— 技能包 (skill_* 工具, 参考 opencode skill) ——
     skills: {
-      enabled: !bool(env.DISABLE_SKILLS), // DISABLE_SKILLS=1 关闭技能包
+      enabled: !bool(env.DISABLE_SKILLS),          // DISABLE_SKILLS=1 关闭技能包
+      dataDir: env.SKILLS_DIR || path.join(__dirname, 'data', 'skills'), // 用户/远程 skill 落地目录
+      remoteUrls: (env.SKILLS_URLS || '').split(',').map((s) => s.trim()).filter(Boolean), // 启动时自动同步的远程仓库 (逗号分隔)
+      extraPaths: (env.SKILLS_PATHS || '').split(',').map((s) => s.trim()).filter(Boolean), // 额外扫描的本地目录 (逗号分隔)
+      maxContentChars: int(env.SKILLS_MAX_CONTENT_CHARS, 8000), // skill_get 返回的 content 上限 (字符)
+      grepLimit: int(env.SKILLS_GREP_LIMIT, 100),                // skill_search 最大命中数
+      grepTimeoutMs: int(env.SKILLS_GREP_TIMEOUT_MS, 5000),     // grep 超时
     },
 
     // —— 持久记忆 (remember/recall 工具; 聊天室非真私密, 默认关) ——
@@ -124,6 +130,16 @@ export function loadConfig(env = process.env) {
       enabled: bool(env.ENABLE_TRIGGER),     // ENABLE_TRIGGER=1 开启主动消息
       threshold: int(env.TRIGGER_THRESHOLD, 10),   // 每累计 N 条(非自己)消息触发一次
       cooldownMs: int(env.TRIGGER_COOLDOWN_MS, 300000), // 触发后冷却, 防刷屏
+    },
+
+    // —— 拟人形态触发器 (@ 提及聊天: AI 助手腔 vs 鱼塘老网友腔) ——
+    persona: {
+      enabled: !bool(env.DISABLE_PERSONA),    // DISABLE_PERSONA=1 关掉 (退回 main 默认 prompt)
+      defaultMode: env.PERSONA_DEFAULT_MODE === 'human' ? 'human' : 'formal', // 平局时默认
+      tieMargin: Number(env.PERSONA_TIE_MARGIN || 0.15), // human/formal 分差 < 此值视为平局
+      hourBiasHumanStart: int(env.PERSONA_LATE_HOUR_START, 0),  // 几点起偏 human (默认 0 点)
+      hourBiasHumanEnd: int(env.PERSONA_LATE_HOUR_END, 7),      // 几点止偏 human (默认 7 点)
+      stickinessSize: int(env.PERSONA_STICKINESS_MAX, 200),     // 黏性 FIFO 上限
     },
 
     // —— LLM (DeepSeek, OpenAI 兼容) ——
