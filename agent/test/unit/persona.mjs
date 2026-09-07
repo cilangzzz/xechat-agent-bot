@@ -3,7 +3,7 @@
 import {
   MODE_FORMAL, MODE_HUMAN,
   createPersonaTrigger, createPersonaEngine, pickPersona, scoreMessage, getHumanSystemPrompt,
-  enrichDecision, humanizeReply,
+  enrichDecision, humanizeReply, _addReplyPrefix,
 } from '../../lib/business/persona.mjs';
 import { Router } from '../../lib/business/router.mjs';
 import { SessionStore } from '../../lib/business/sessions.mjs';
@@ -196,6 +196,30 @@ export async function run() {
     check('humanizeReply 拦"福"谐音"妈"', !/福/.test(humanizeReply('尼玛的福')));
     check('humanizeReply 拦"你妈死了"', !/你妈死/.test(humanizeReply('你妈死了 真的')));
     check('humanizeReply 拦"你家人都没了"', !/你家.*(没|亡|无)/.test(humanizeReply('你家人都没了')));
+  }
+
+  // —— (i) 防模板化: _addReplyPrefix 兜底 (LLM 主路径已强制带前置) —— //
+  console.log('[9.6c] 防模板化前缀');
+  {
+    // ≤4 字裸回 → 兜底加前缀
+    const rng = () => 0; // 永远选 '啧'
+    const t1 = _addReplyPrefix('你🐴呢', rng);
+    check('短裸回"你🐴呢"加前缀', /^啧 你🐴呢/.test(t1), `actual: ${t1}`);
+    const t2 = _addReplyPrefix('闭嘴', rng);
+    check('短裸回"闭嘴"加前缀', /^啧 闭嘴/.test(t2), `actual: ${t2}`);
+    const t3 = _addReplyPrefix('滚', rng);
+    check('单字"滚"加前缀', /^啧 滚/.test(t3), `actual: ${t3}`);
+    // 已有前置 → 不加 (LLM 自己挑的保留)
+    const t4 = _addReplyPrefix('啧 你🐴呢');
+    check('已有前缀"啧"不加', t4 === '啧 你🐴呢', `actual: ${t4}`);
+    const t5 = _addReplyPrefix('嗯嗯 你说得对');
+    check('已有前缀"嗯嗯"不加', t5 === '嗯嗯 你说得对', `actual: ${t5}`);
+    // 5-6 字的有内容回 → 不兜底 (容忍 LLM 自然产出)
+    const t6 = _addReplyPrefix('你脑子是装饰品');
+    check('5字以上有内容回不加前缀', t6 === '你脑子是装饰品', `actual: ${t6}`);
+    // 空 → 不崩
+    const t7 = _addReplyPrefix('', rng);
+    check('空字符串不崩', t7 === '', `actual: ${t7}`);
   }
 
   // —— 9.6b createPersonaEngine: 启动调 LLM 生成 / 缓存 / 失败兜底 —— //

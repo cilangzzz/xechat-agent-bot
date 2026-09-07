@@ -132,6 +132,15 @@ export function loadConfig(env = process.env) {
       cooldownMs: int(env.TRIGGER_COOLDOWN_MS, 300000), // 触发后冷却, 防刷屏
     },
 
+    // —— Rage Mode (v2): 被 @ 之后进入"主动怼别人"窗口 ——
+    aggressive: {
+      enabled: !bool(env.DISABLE_AGGRESSIVE),  // DISABLE_AGGRESSIVE=1 关掉 (退回被动模式)
+      durationMs: int(env.AGGRESSIVE_DURATION_MS, 8 * 60 * 1000),   // 窗口长度(默认 8 分钟, 较激进)
+      cooldownMs: int(env.AGGRESSIVE_COOLDOWN_MS, 12 * 1000),        // 单次攻击后冷却(默认 12s)
+      maxAttacks: int(env.AGGRESSIVE_MAX_ATTACKS, 15),                // 单轮窗口攻击上限(默认 15)
+      attackRate: Number(env.AGGRESSIVE_ATTACK_RATE || 0.55),        // 每条非 @ 消息的攻击概率(0-1, 默认 55%)
+    },
+
     // —— 拟人形态触发器 (@ 提及聊天: AI 助手腔 vs 鱼塘老网友腔) ——
     persona: {
       enabled: !bool(env.DISABLE_PERSONA),    // DISABLE_PERSONA=1 关掉 (退回 main 默认 prompt)
@@ -140,6 +149,18 @@ export function loadConfig(env = process.env) {
       hourBiasHumanStart: int(env.PERSONA_LATE_HOUR_START, 0),  // 几点起偏 human (默认 0 点)
       hourBiasHumanEnd: int(env.PERSONA_LATE_HOUR_END, 7),      // 几点止偏 human (默认 7 点)
       stickinessSize: int(env.PERSONA_STICKINESS_MAX, 200),     // 黏性 FIFO 上限
+      // —— 心情池类型 (persona.mjs MOOD_POOLS: casual | sarcastic | cold) ——
+      // 不设 = 跟随 mode (human→sarcastic, formal→casual); 温柔妹子/其它人格可覆盖
+      kind: ['casual', 'sarcastic', 'cold'].includes(env.PERSONA_KIND) ? env.PERSONA_KIND : null,
+      // —— 关闭人设过滤兜底 (嘴臭小子等用): 关掉 humanizeReply 的"骂家庭"硬拦截 ——
+      // 默认 false, 强烈建议保留 true 兜底; 显式 PERSONA_NO_FAMILY_FILTER=1 才允许放开
+      noFamilyFilter: bool(env.PERSONA_NO_FAMILY_FILTER),
+      // —— 强制走 human 模式 (几波大这种单一 persona 用): 忽略黏性/平局/触发器判定, 永远走人设 prompt —
+      // 适合"该 bot 没有 formal 模式"的人格; 默认 false 不动其它 bot 行为
+      forceHuman: bool(env.PERSONA_FORCE_HUMAN),
+      // —— 关闭防御性前置加词 (几波大这种直接攻击型人格用): 关掉 _addReplyPrefix ——
+      // 默认 false (保留软垫); PERSONA_NO_PREFIX=1 = 短回复不加 "啧/哎/嗯嗯" 这种 cushion, 直接砸
+      noPrefix: bool(env.PERSONA_NO_PREFIX),
       // —— 人设 prompt 引擎 (启动时调 LLM 生成"李乐儿"人格, 动态注入 human 模式) ——
       generate: !bool(env.PERSONA_NO_GENERATE), // PERSONA_NO_GENERATE=1 不调 LLM, 用内置李乐儿模板
       regen: bool(env.PERSONA_REGEN),           // PERSONA_REGEN=1 启动强制重生成 (忽略缓存)
@@ -160,6 +181,14 @@ export function loadConfig(env = process.env) {
       mock: bool(env.MOCK_LLM), // MOCK_LLM=1 → 不调真实 API, 返回固定回复(离线自测用)
       mockToolCall: bool(env.MOCK_TOOLCALL), // MOCK_TOOLCALL=1 → mock 第一轮返回工具调用, 用于测工具循环/思考结果输出
       mockLongReply: bool(env.MOCK_LONG_REPLY), // MOCK_LONG_REPLY=1 → mock 返回超长回复, 用于测分片发送
+    },
+
+    // —— 意图识别 (前缀内自由文本路由, 参考 opencode: 规则 + LLM 决策) ——
+    // 作用域: 仅对 /大黄鱼 前缀内且未命中 builtin 表的文本分类; 无前缀消息完全不受影响
+    intent: {
+      enabled: !bool(env.DISABLE_INTENT),       // DISABLE_INTENT=1 关闭意图识别 (回退到 main agent)
+      timeoutMs: int(env.INTENT_TIMEOUT_MS, 10000), // 分类 LLM 调用超时
+      cacheSize: int(env.INTENT_CACHE_SIZE, 64),    // LRU 缓存容量 (相同文本零成本复用)
     },
 
     // —— 行为 ——

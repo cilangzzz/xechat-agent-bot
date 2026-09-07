@@ -15,6 +15,7 @@ import { MemoryStore } from './lib/business/memory.mjs';
 import { Scheduler } from './lib/business/scheduler.mjs';
 import { createTrigger } from './lib/business/trigger.mjs';
 import { createPersonaEngine } from './lib/business/persona.mjs';
+import { createAggressiveMode, createHarassmentTracker } from './lib/business/aggressive.mjs';
 import { ChatLog } from './lib/business/chat-log.mjs';
 import { uploadContent as sendupUpload } from './lib/platform/sendup.mjs';
 import { createImageGenerator } from './lib/platform/minimax-image.mjs';
@@ -84,6 +85,19 @@ const api = new XechatApi({ ...cfg.api, log });
 const memory = new MemoryStore({ ...cfg.memory, log }); // 持久用户事实(默认关)
 const scheduler = new Scheduler({ ...cfg.scheduler, log }); // 定时任务
 const trigger = createTrigger({ ...cfg.trigger, log, botNames: [cfg.username, '大黄鱼', '草鱼'].filter(Boolean) }); // 多人发言主动消息触发器(默认关)
+
+// Rage mode (v2): 被 @ 一次后进入 5 分钟"主动怼人"模式 — 看到别人的聊天按 30% 概率主动怼
+const aggressive = createAggressiveMode({
+  enabled: cfg.aggressive?.enabled !== false,
+  durationMs: cfg.aggressive?.durationMs || 5 * 60 * 1000,
+  cooldownMs: cfg.aggressive?.cooldownMs || 30 * 1000,
+  maxAttacks: cfg.aggressive?.maxAttacks ?? 8,
+  attackRate: cfg.aggressive?.attackRate ?? 0.30,
+  log,
+});
+
+// 骚扰计数器 (复读机/叫爹/嘬嘬嘬 累加) — 60s 内重复同一内容 → count++
+const harassmentTracker = createHarassmentTracker({ windowMs: 60 * 1000, log });
 const chatLog = new ChatLog({ ...cfg.chatLog, log }); // 聊天记录日志(持久化)
 const sendup = { ...cfg.sendup, upload: sendupUpload }; // 文件分享 (sendup.cc 三步上传, 内容驱动)
 const minimaxImage = createImageGenerator({ ...cfg.minimaxImage, proxy: cfg.proxy, log }); // MiniMax 图片生成 (文生图/图生图)
@@ -316,8 +330,13 @@ client.onMessage = (m, { live }) => {
         log(`[主动] 检测到 ${trigger.getState().threshold} 人发言, 生成争议性消息`);
         (async () => {
           try {
-            const text = await llm.chat(TRIGGER_SYSTEM, [{ role: 'user', content: formatTriggerBatch(batch) }]);
-            const msg = String(text || '').trim().replace(/^["'「『“]+|["'」』”]+$/g, '');
+            // 主动广播时把 persona prompt 也塞进去, 让"韭菜哥"开广播也是老韭菜腔 (而不是通用大黄鱼)
+            // 失败/未就绪时退回 TRIGGER_SYSTEM 兜底
+            const triggerSystem = await _buildTriggerSystem();
+            const text = await llm.chat(triggerSystem, [{ role: 'user', content: formatTriggerBatch(batch) }]);
+            let msg = String(text || '').trim().replace(/^["'「『“]+|["'」』”]+$/g, '');
+            // 防模板化: 没有任何前置的裸回, 加个 "啧/" 之类的前缀
+            msg = _addReplyPrefix(msg);
             // 无槽点静默: 空串 / 只有标点 / "路过"等 → 不广播, 避免刷屏
             const silent = !msg || /^[。.…·\s]*$/.test(msg) || /^(路过|不想说|算了|没什么好说|没槽点|没意思|沉默|闭嘴)/.test(msg);
             if (!silent) { await sendReply(msg, null); log(`[主动广播] ${msg.slice(0, 120)}`); }
@@ -333,7 +352,34 @@ client.onMessage = (m, { live }) => {
     // 路由判定: 命中指令前缀 → 命令/工具处理; 否则若 @ 提及机器人 → 只聊天(不触发应用处理)
     const isCmd = contentStr.trim().startsWith(cfg.cmdPrefix);
     const mentionChat = !isCmd ? extractMention(contentStr, cfg.username) : '';
-    if (!isCmd && !mentionChat) return;
+    if (!isCmd && !mentionChat) {
+      // 非指令/非 @: 走 rage mode 检查 (被 @ 后 5 分钟内, 30% 概率主动怼回去)
+      const repeatCountNon = harassmentTracker.record(from, contentStr);
+      const attack = aggressive.tick({ from, content: contentStr, repeatCount: repeatCountNon });
+      if (attack && live) {
+        log(`[aggressive] 触发攻击 → ${from} (repeat=${repeatCountNon}): ${contentStr.slice(0, 80)}`);
+        (async () => {
+          try {
+            const reply = await _handleAggressiveAttack({
+              target: from,
+              content: attack.content,
+              repeatCount: repeatCountNon,
+              roomTail: pondState.roomLog.slice(-6).map((m) => `${m.from}: ${m.content || ''}`).join('\n'),
+            });
+            if (reply) {
+              aggressive.recordAttack(from);
+              await sendReply(reply, from);
+              log(`[aggressive-attack] → ${from} (repeat=${repeatCountNon}): ${reply.slice(0, 80).replace(/\n/g, '\\n')}`);
+            } else {
+              log(`[aggressive] LLM 返回空, 不计入攻击次数`);
+            }
+          } catch (e) {
+            log(`[aggressive] 攻击异常: ${e.message}`);
+          }
+        })();
+      }
+      return;
+    }
     if (!live) { log(`[消息] ${from}: ${contentStr} (登录期回放,跳过)`); return; }
 
     if (Date.now() - lastReply < cfg.replyCooldownMs) {
@@ -354,20 +400,107 @@ client.onMessage = (m, { live }) => {
 
     (async () => {
       let reply;
+      // 计算复读计数 (复读机会升级攻击性 + 装死率上升)
+      const repeatCount = mentionChat ? harassmentTracker.record(from, contentStr) : 0;
       try {
         reply = isCmd
           ? await router.handle({ from, text: contentStr, isLive: live, onThinking: thinkOut })
-          : await router.handleMention({ from, text: mentionChat, isLive: live, onThinking: thinkOut });
-        log(`[回复] → ${from}: ${reply}`);
+          : await router.handleMention({ from, text: mentionChat, isLive: live, onThinking: thinkOut, repeatCount });
+        log(`[回复] → ${from} (repeat=${repeatCount}): ${reply}`);
       } catch (e) {
         reply = '这个我暂时答不上来，换个问题试试？';
         log(`[!] 处理异常: ${e.message}, 发送兜底回复`);
       }
       await sendReply(reply, from);
+      // v2: @ 提及 (非命令) 后触发 rage mode — 之后 5 分钟内看到别人聊天会主动怼
+      if (!isCmd && mentionChat && reply) aggressive.trigger('mention');
       busyUsers.delete(from);
     })();
   }
 };
+
+// —— 给裸回 (没前缀的怼) 自动加前缀 (防御性, 防 LLM 输出太赤裸) —— //
+const PREFIX_POOL = ['啧', '哎', '嗯嗯', '哈', '我超', '我去', '切', '行', '嗐', '呵'];
+function _addReplyPrefix(text) {
+  const s = String(text || '').trim();
+  if (!s) return s;
+  // 已经有前缀 (以 啧/哎/嗯/哈/我/你/他/啥/你/的/行/切/嗐/呵/真好 等常用字开头)
+  const first = s.charAt(0);
+  if (['啧', '哎', '嗯', '哈', '我', '你', '他', '她', '它', '啥', '的', '行', '切', '嗐', '呵', '真', '好', '操', '别', '看', '听', '滚', '爬', '闭', '丢', '活', '急', '谁', '找', '跟', '跟'].includes(first)) return s;
+  // 看着像 "你🐴呢" / "?" 这种 1-3 字裸怼 → 加前缀
+  if ([...s].length <= 6) {
+    const prefix = PREFIX_POOL[Math.floor(Math.random() * PREFIX_POOL.length)];
+    return `${prefix} ${s}`;
+  }
+  return s;
+}
+
+// —— 主动广播时把 persona prompt 也塞进去, 让"韭菜哥"开广播也是老韭菜腔 (而不是通用大黄鱼) —— //
+async function _buildTriggerSystem() {
+  const persona = (personaEngine && typeof personaEngine.getPrompt === 'function')
+    ? personaEngine.getPrompt()
+    : null;
+  if (!persona) return TRIGGER_SYSTEM.join('\n');
+  return [
+    '## 你是谁 (用这个身份说话, 跟 @ 提及回复一致)',
+    persona,
+    '',
+    '## 你现在做的是: PROACTIVE 主动广播',
+    '上面是你的人设 prompt. 下面这些规则是"主动插入一句话"的具体规范.',
+    '',
+    TRIGGER_SYSTEM.join('\n'),
+  ].join('\n');
+}
+
+// —— 主动攻击 (rage mode) 生成攻击回复 —— //
+async function _handleAggressiveAttack({ target, content, repeatCount = 0, roomTail }) {
+  // 拼装系统提示词: 人设 prompt + rage mode 行为规范
+  const personaPrompt = personaEngine.getPrompt();
+  // 复读机升级: count 越大, 越要直接怼 + 越不装禅 + 用更猛的词
+  const escalation = repeatCount >= 5
+    ? '这是第 ' + repeatCount + ' 次复读, 真老哥已经烦透顶, **上来就怼, 别装禅, 别装没看见**, 用最猛的词 (爬/滚/闭嘴/丢人现眼/活腻了/你🐴呢/狗叫/你脑子是装饰品吧 随便挑), 不要 "嗯嗯 你说得对" 这种温和版'
+    : repeatCount >= 3
+    ? '这是第 ' + repeatCount + ' 次复读, **别装禅, 直接怼**: 你🐴呢 / 爬 / 闭嘴 / 滚 / 丢人现眼 / 活腻了 之类, 别再说 "嗯嗯 你说得对" 这种温和版'
+    : '对方随便说了句话, 你是真老哥, 直接怼或阴阳, 看心情';
+  const attackSystem = [
+    personaPrompt,
+    '',
+    '## 本轮: RAGE MODE 主动攻击',
+    `- 你刚才被人 @ 了, 正在气头上, 主动怼回去真老哥模式`,
+    `- 目标用户「${target}」刚刚在房间发了: "${content}"`,
+    `- 复读计数 (60s 内同内容重复次数): ${repeatCount}`,
+    `- ${escalation}`,
+    `- 房间最近氛围 (给你背景, 不要直接复述):`,
+    roomTail,
+    '',
+    '## 攻击守门 (硬性)',
+    '- **短**: 50% ≤8 字 / 30% 8-25 字 / 17% 25-50 字 / 3% >50 字',
+    '- **最多连 2 条**, 总和 ≤ 30 字, 多了 = AI 在解释',
+    '- 直接怼 / 阴阳怪气 / 反问 / 装看不见 / 急眼了, 都行, 看你心情',
+    '- **必带前置 (由你自己根据语境生成, 不要随机套)**: 装逼→啧/呵/切; 挑衅→哎/我超/好家伙; 复读→嗯嗯/服了; 闲聊→嗐/我去. 不要直接上来就 "你🐴呢" / "闭嘴". 范例: 啧 你🐴呢 / 哎 爬 / 呵 滚远点 / 嗯嗯 你品',
+    '- 不否认AI (不要 "我就是个路过的散户")',
+    '- **绝对不骂家人 / 不威胁死亡 / 不涉黄赌毒 / 不涉政**',
+    '- emoji 30% 概率 1 个, 句末别黏, 别用 🐟',
+    '- 分段: 一个想法一条, \n 拆',
+  ].filter(Boolean).join('\n');
+  let reply;
+  try {
+    reply = await llm.agentTurn({
+      systemPrompt: attackSystem,
+      history: [], // 不带历史, 当场反应
+      tools: router.chatView(),
+      onThinking: () => {},
+      from: target,
+    });
+  } catch (e) {
+    log(`[aggressive] LLM 异常: ${e.message}`);
+    return null;
+  }
+  if (!reply) return null;
+  // 真人化后处理: 截断 + 黑名单 + 防裸回加前缀
+  const { humanizeReply, _addReplyPrefix } = await import('./lib/business/persona.mjs');
+  return _addReplyPrefix(humanizeReply(reply, { noFamilyFilter: cfg.persona?.noFamilyFilter === true }));
+}
 
 // —— 主循环: 掉线自动重连 ——
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -378,6 +511,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   log(`触发: "${cfg.cmdPrefix}" 开头 → ${cfg.llm.mock ? 'MOCK' : cfg.llm.model} ${cfg.llm.mock ? '' : '(LLM+tools)'} 生成回复`);
   if (cfg.owner) log(`专属模式: 只服务领养人「${cfg.owner}」, 触发前缀 "${cfg.ownerPrefix}"`);
   if (cfg.trigger.enabled) log(`主动消息: 开启(每 ${cfg.trigger.threshold} 个不同用户发言触发一次)`);
+  if (cfg.aggressive?.enabled !== false) {
+    const ag = cfg.aggressive;
+    log(`Rage Mode: 开启 (@ 后 ${Math.round((ag.durationMs||300000)/1000)}s 内, ${Math.round((ag.attackRate||0.30)*100)}% 概率主动怼别人, 上限 ${ag.maxAttacks||8} 次)`);
+  } else {
+    log('Rage Mode: 关闭');
+  }
   if (cfg.persona?.enabled !== false) {
     const pe = personaEngine.getMeta();
     log(`拟人形态: 开启 (人设 prompt: status=${pe.status}, source=${pe.source}, ${pe.len}字${cfg.persona?.regen ? ', 启动强制重生成' : ''})`);

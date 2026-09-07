@@ -16,8 +16,9 @@ import { listSkills } from './skills.mjs';
 import * as schedMod from './scheduler.mjs';
 import {
   MODE_FORMAL, MODE_HUMAN,
-  createPersonaTrigger, getHumanSystemPrompt, humanizeReply,
+  createPersonaTrigger, getHumanSystemPrompt, humanizeReply, _addReplyPrefix,
 } from './persona.mjs';
+import { classifyIntent } from './intent.mjs';
 
 /** 解析一条消息: 是否命中前缀 */
 export function parseCommand(text, prefix) {
@@ -258,7 +259,13 @@ export class Router {
       return String(await this.builtin[sub](arg, { from }));
     }
 
-    // —— 第二段: main agent 回合 ——
+    // —— 第二段: 意图识别 (仅作用于前缀内未命中 builtin 的自由文本) ——
+    // 参考 opencode: 确定性规则 + LLM 决策。把模糊自由文本分到 explore/math/room/query
+    // 等更便宜的路径; 分类失败/未知一律 'main' 兜底(原有行为零变化)。
+    const intentResult = await this._classifyAndDispatch(sub, arg, from);
+    if (intentResult !== null && intentResult !== undefined) return String(intentResult);
+
+    // —— 第三段: main agent 回合 ——
     const userText = sub && !this.builtin[sub] ? `${sub} ${arg}`.trim() : (arg || '');
     const snap = this.sessions.pushUser(from, userText || text);
     if (this._summarize) await this.sessions.maybeCompress(from, this._summarize);
@@ -317,7 +324,7 @@ export class Router {
    * @param {object} ctx { from, text, isLive, onThinking }
    * @returns {Promise<string>} 聊天回复
    */
-  async handleMention({ from, text, isLive, onThinking }) {
+  async handleMention({ from, text, isLive, onThinking, repeatCount = 0 }) {
     void isLive;
     void onThinking; // @ 聊天静默: 不需要思考提示
     if (!this.mentionEnabled()) return '';
@@ -331,7 +338,19 @@ export class Router {
     this.persona._lastReplySnapshot?.forEach?.((ts, u) => lastReplyMap.set(u, ts));
     const decision = this.persona.analyze(chatText, from, this.pondState && this.pondState.roomLog, {
       lastReplyAtByUser: lastReplyMap,
+      personaKind: this.cfg.persona?.kind || null,
     });
+    // 强制 human 模式 (单一 persona bot 用 — 该 bot 没有 formal 模式)
+    if (this.cfg.persona?.forceHuman && decision.mode !== MODE_HUMAN) {
+      if (this.deps && this.deps.log) this.deps.log(`[persona] ${from} → force human (cfg.persona.forceHuman)`);
+      decision.mode = MODE_HUMAN;
+    }
+    // 复读机 5+: 70% 概率直接装死不回 (真老哥已经烦透了)
+    if (repeatCount >= 5 && Math.random() < 0.7) {
+      if (this.deps && this.deps.log) this.deps.log(`[persona] ${from} → lurk (repeat=${repeatCount}, 复读装死)`);
+      this.persona.noteReply(from);
+      return '';
+    }
     // 装死/敷衍: 不调 LLM, 直接发 👀 或 装死
     if (decision.reply === 'lurk' || decision.reply === 'busy') {
       const ack = decision.reply === 'busy' ? '👀' : '';
@@ -345,7 +364,7 @@ export class Router {
       return ack;
     }
 
-    const sys = this._buildChatSystemPrompt(snap.summary, decision);
+    const sys = this._buildChatSystemPrompt(snap.summary, { ...decision, repeatCount });
     let reply;
     try {
       reply = await this.llm.agentTurn({
@@ -359,15 +378,15 @@ export class Router {
       reply = '啊?';
     }
     // 真人化后处理: 去掉 LLM 残留的 AI tell (🐟 在句末、"我是真人"否认等)
-    reply = humanizeReply(reply);
-    // 强制分段: 让 LLM 写得短 + 后处理拆分, 让 reply.mjs 按行切
+    reply = humanizeReply(reply, { noFamilyFilter: this.cfg.persona?.noFamilyFilter === true });
+    // 防模板化: 短裸回 (≤6 字且无前置) 自动加 "啧/哎/嗯嗯" 等前置, 像真人微信
+    // opt-out: PERSONA_NO_PREFIX=1 (几波大这种直接攻击型用, 不要 cushion 缓冲)
+    if (!this.cfg.persona?.noPrefix) reply = _addReplyPrefix(reply);
     this.sessions.pushAssistant(key, reply);
-    // 记下回复时间, 给下一次 lurk 判定用
     this.persona.noteReply(from);
-    // 调试日志
     if (this.deps && this.deps.log) {
       const tail = reply.length > 60 ? reply.slice(0, 60) + '…' : reply;
-      this.deps.log(`[persona] ${from} → ${decision.mode} mood=${decision.mood} len=${decision.lengthBudget} emoji=${decision.emojiBudget} | ${tail.replace(/\n/g, '\\n')}`);
+      this.deps.log(`[persona] ${from} → ${decision.mode} mood=${decision.mood} len=${decision.lengthBudget} emoji=${decision.emojiBudget} repeat=${repeatCount} | ${tail.replace(/\n/g, '\\n')}`);
     }
     return reply;
   }
@@ -385,6 +404,7 @@ export class Router {
     const def = getAgent('main');
     const env = buildEnvironment({ cfg: this.cfg, pondState: this.pondState, sessions: this.sessions });
     const mode = decision.mode || MODE_FORMAL;
+    const repeatCount = decision.repeatCount || 0;
     if (mode === MODE_HUMAN) {
       // 拟人形态: 用 persona 引擎动态注入的人设 prompt (启动时 AI 生成; 未就绪/失败 = 内置李乐儿模板)
       const human = this.personaEngine ? this.personaEngine.getPrompt() : getHumanSystemPrompt();
@@ -397,16 +417,24 @@ export class Router {
       const lengthBudget = decision.lengthBudget || 'short';
       const emojiBudget = decision.emojiBudget || 0;
       const typoChance = Math.round((decision.typoChance || 0) * 100);
+      // 复读机升级: count 越大越要硬怼, 越不装禅
+      const repeatEscalation = repeatCount >= 5
+        ? `\n## 复读 ${repeatCount} 次 (严重复读) — 真老哥已经烦透顶\n- **上来就怼**, 别装禅, 别装没看见\n- 用最猛的词 (爬/滚/闭嘴/丢人现眼/活腻了/你🐴呢/狗叫/丢人丢到姥姥家/谁给你的勇气)\n- 不要再 "嗯嗯 你说得对" 这种温和版`
+        : repeatCount >= 3
+        ? `\n## 复读 ${repeatCount} 次 — 别装禅, 直接怼\n- 短怼: 你🐴呢 / 爬 / 闭嘴 / 丢人现眼 / 活腻了 之类\n- 不要再 "嗯嗯 你说得对" 这种温和版`
+        : '';
       const behaviorLines = [
         '\n## 本轮节奏 (硬性, 直接决定输出形态)',
         `- mood: ${mood}`,
         `- 长度: ${lengthBudget} (one-liner ≤8 字 / short ≤25 / normal ≤60 / verbose ≤100)`,
-        `- emoji 配额: 本轮 ${emojiBudget} 个; emoji 30% 概率才用, 用了就用随机的 (🌚 🤣 🤔 😡 👀 🔥 ✨ 💀 🐴 都行), 不要总用同一个, 句末 emoji 拆到独立一行`,
+        `- emoji 配额: 本轮 ${emojiBudget} 个; emoji 30% 概率才用, 用了就用就的 (🌚 🤣 🤔 😡 👀 🔥 ✨ 💀 🐴 都行), 不要总用同一个, 句末 emoji 拆到独立一行`,
         `- 打字出错率: ${typoChance}% (偶尔漏字/多字, 不用修)`,
         `- **分段发**: 多句想法用 \\n 拆一条; 真人不黏成长句; 别写 "嗯嗯, 你说得对, 儒雅随和"这种三段黏一起的 AI 模板`,
+        `- **必带前置 (由你自己根据语境生成, 不要随机套同一池)**: 装逼→啧/呵/切; 挑衅→哎/我超/好家伙; 复读→嗯嗯/服了; 请教→嗯/嗐/我去. 不要直接上来就 "你🐴呢" / "闭嘴" / "滚". 范例: 啧 你🐴呢 爬 / 哎 你🐴呢 装啥 / 呵 滚远点`,
         `- 别否认身份: 不要 "我是真人" / "我不是 AI" / "我就是个路过的散户" 这种 AI 帮自己辩护的话 (反而暴露)`,
         `- 被打脸直接认: "哦我说错了" / "行你赢了"; 不道歉三段`,
-      ];
+        repeatEscalation,
+      ].filter(Boolean);
       const parts = [
         env,
         human,
@@ -444,6 +472,121 @@ export class Router {
     if (r.error) return `计算失败: ${r.error}`;
     if (r.exitCode !== 0) return `计算失败: ${r.stderr || '未知错误'}`;
     return `= ${String(r.stdout || '').trim() || '(无输出)'}`;
+  }
+
+  // ===== 意图识别 (前缀内自由文本 → explore/math/room/query 路由) =====
+
+  /** 第二段入口: 给一段 sub+arg, 跑分类 + 派发; 返回 null 表示未派发(回落到 main) */
+  async _classifyAndDispatch(sub, arg, from) {
+    if (!sub) return null;
+    const ic = this.cfg.intent || {};
+    if (ic.enabled === false) return null;
+    if (!this.llm) return null;
+    const userText = arg ? `${sub} ${arg}`.trim() : sub;
+    const log = (this.deps && this.deps.log) || (() => {});
+    let intent = 'main';
+    try {
+      intent = await classifyIntent(userText, this.llm, {
+        timeoutMs: ic.timeoutMs || 10000,
+        log,
+      });
+    } catch (e) {
+      log(`[intent] 分类抛错 (${e.message}), 兜底 main`);
+      return null;
+    }
+    return this._dispatchByIntent(intent, userText, from);
+  }
+
+  /** 根据 intent 派发到具体路径; 不认领的 intent 返回 null(回落到 main agent) */
+  async _dispatchByIntent(intent, userText, from) {
+    switch (intent) {
+      case 'explore':
+        // 联网/调研/抓网页 → explore 子智能体
+        try {
+          return String(await this.subagent._runSubdirect('explore', userText, from));
+        } catch (e) { return null; }
+      case 'math': {
+        // 纯数字表达式走 _safeMath; 否则走 math 子智能体(python 任意表达式/画图/数据处理)
+        const src = userText.replace(/^[\s\S]*?(?:算|compute|calc|=|等于|是多少)\s*/i, '').trim();
+        const candidate = /^[0-9+\-*/.%\s()]+$/.test(src) && src.length <= 200 ? src : userText;
+        if (/^[0-9+\-*/.%\s()]+$/.test(candidate) && candidate.length <= 200) {
+          return String(await this._safeMath(candidate, from));
+        }
+        try {
+          return String(await this.subagent._runSubdirect('math', userText, from));
+        } catch (e) { return null; }
+      }
+      case 'room': {
+        const r = this._parseRoomIntent(userText);
+        if (!r) return null;
+        try { return String(await this.builtin[r.cmd](r.arg, { from })); }
+        catch (e) { return null; }
+      }
+      case 'query': {
+        const r = this._parseQueryIntent(userText);
+        if (!r) return null;
+        try { return String(await this.builtin[r.cmd](r.arg, { from })); }
+        catch (e) { return null; }
+      }
+      // builtin / chat / main / 未知 → 回落到 main agent
+      default:
+        return null;
+    }
+  }
+
+  /** room 意图解析: 自由文本 → { cmd: 'create-room'|'close-room'|'rooms', arg } */
+  _parseRoomIntent(text) {
+    const t = String(text || '').trim();
+    if (!t) return null;
+    // 创建房间: "开个/创建/新建/搞个/建一个 + 游戏名 + 可选(数字 + 可选模式)"
+    // 例: "开一个五子棋房间 2" / "建个斗地主 3人 经典" / "搞个不贪吃蛇"
+    let m = t.match(/^(?:开|创建|新建|搞个|建一个|建个|起一个|起个)(?:一个|个)?\s*(.+?)\s*(?:房间|对局|局|牌局|桌子)?$/);
+    if (m) return { cmd: 'create-room', arg: m[1] };
+    // 关闭房间: "关闭/关掉/取消/关 + 房间 + ID" / 直接给 ID 也认
+    m = t.match(/^(?:关闭|关掉|取消|关)\s*(?:房间|房间号|ID)?\s*(\d+)\s*(?:号|房间)?$/);
+    if (m) return { cmd: 'close-room', arg: m[1] };
+    if (/^\d{4,}$/.test(t)) {
+      // 纯长数字 → 当房间 ID, 默认走关闭 (用户在指挥 "关 153449001")
+      return { cmd: 'close-room', arg: t };
+    }
+    // 列出房间
+    if (/^(?:列|查|查看|看看|现在|目前|有哪些|都有哪些|有哪些|几个|活动)\s*(?:房间|活动|现在的房间|所有房间|活动房间)/.test(t)
+        || /^(?:房间|活动房间|现在房间)$/.test(t)
+        || /有(?:哪些|啥|什么|几个)\s*房/.test(t)) {
+      return { cmd: 'rooms', arg: '' };
+    }
+    return null;
+  }
+
+  /** query 意图解析: 自由文本 → { cmd: 'gold'|'online'|'stats'|'games'|'game', arg } */
+  _parseQueryIntent(text) {
+    const t = String(text || '').trim();
+    if (!t) return null;
+    // 金价 (默认最常见)
+    if (/^(?:今日|今天)?(?:金价|黄金(?:价格)?|金价多少|金)$/.test(t)
+        || /(?:今日金价|今日黄金|金价多少|现在金价|查金价)/.test(t)) {
+      return { cmd: 'gold', arg: '' };
+    }
+    // 在线
+    if (/^(?:在线|现在谁|现在有谁)$/.test(t)
+        || /(?:现在)?(?:在线|有谁|几个人|谁在|都有谁|有几个人|几位)/.test(t)) {
+      return { cmd: 'online', arg: '' };
+    }
+    // 统计
+    if (/^(?:统计|现状|状态|概要)$/.test(t) || /(?:统计|现状|当前状态|鱼塘状态)/.test(t)) {
+      return { cmd: 'stats', arg: '' };
+    }
+    // 游戏列表
+    if (/^(?:游戏列表|所有游戏|游戏清单|游戏)$/.test(t)
+        || /(?:游戏列表|所有游戏|游戏清单|有什么游戏|有哪些游戏|游戏都有啥|都有哪些游戏|所有游戏)/.test(t)) {
+      return { cmd: 'games', arg: '' };
+    }
+    // 游戏详情: "XX怎么玩/XX是什么/游戏XX" → builtin.game(XX)
+    const gameMatch = t.match(/^(?:游戏)?(.+?)(?:怎么玩|是什么|玩法|规则|详情|介绍|说明|攻略)$/);
+    if (gameMatch && gameMatch[1].length >= 1 && gameMatch[1].length <= 20) {
+      return { cmd: 'game', arg: gameMatch[1] };
+    }
+    return null;
   }
 
   // ===== 待办 / 记忆 / 压缩 =====

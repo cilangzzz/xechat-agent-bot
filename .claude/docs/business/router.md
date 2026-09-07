@@ -1,9 +1,9 @@
 # Router 业务文档
 
-`Router` 是消息路由与命令分发的核心 —— 它把"一条以 `CMD_PREFIX` 开头的文本"安全护栏、内置命令、子智能体委托、main agent 回合四档分流。@ 提及走独立的纯聊天通道。
+`Router` 是消息路由与命令分发的核心 —— 它把"一条以 `CMD_PREFIX` 开头的文本"安全护栏、内置命令、**意图分类**、子智能体委托、main agent 回合五档分流。@ 提及走独立的纯聊天通道, 接入**拟人触发器**做"AI 助手腔 vs 鱼塘老网友腔"切换。
 
-- 源文件: [lib/router.mjs](../../../agent/lib/router.mjs)（537 行）
-- 配套: [tools.md](./tools.md)（工具注册表）, [multi-agent.md](./multi-agent.md)（多智能体定义）, [system.md](../foundation/system.md)（系统提示词）
+- 源文件: [lib/business/router.mjs](../../../agent/lib/business/router.mjs)（793 行, 2026-08-28 大幅扩展）
+- 配套: [tools.md](./tools.md)（工具注册表）, [multi-agent.md](./multi-agent.md)（多智能体定义）, [intent.md](./intent.md)（意图分类器）, [persona.md](./persona.md)（拟人触发器）, [subagent.mjs](#) / [aggressive.md](./aggressive.md)（子智能体/复读机）
 
 ## 1. `Router` 构造参数
 
@@ -20,13 +20,27 @@ new Router({
   scheduler,     // Scheduler? —— schedule 工具
   chatLog,       // ChatLog? —— chat_log 工具
   sendup,        // { upload } —— send_file 工具
+  minimaxImage,  // MiniMax 图像生成器 (generate_image 工具)
+  personaEngine, // 启动时 AI 生成的拟人 prompt 引擎
 })
   .bindLlm(llm)  // 注入 LLM，启用主回合与子智能体委托通道
 ```
 
 构造期会建立工具注册表 `tools = createRegistry({ ... })`，但 LLM 还未绑定 —— `bindLlm` 注入 LLM 后才启用 `tools.ctx.delegate`（子智能体委托）和 `_summarize`（结构化压缩）。
 
-## 2. 三层路由判定（指令路径）
+### 1.1 内部状态
+
+| 字段 | 用途 |
+|---|---|
+| `personaEngine` | 启动时由 agent.mjs 注入, 用于 `_buildChatSystemPrompt` 取人设 prompt |
+| `subagent` | `new SubagentDelegate(this)` —— 子智能体委托通道 (subagent.mjs) |
+| `persona` | `createPersonaTrigger(...)` —— 拟人触发器 (persona.mjs), 控制 mention 的 formal/human 模式 |
+| `tools` | `createRegistry({...})` —— 工具注册表, 见 [tools.md](./tools.md) |
+| `_summarize` | 由 `bindLlm` 注入 `summarizeWithLlm`, 用于会话压缩 |
+| `builtin` | 命令注册表 (`sub -> handler(arg, {from})`), 见 [§5](#5-命令清单builtin-表) |
+| `_curUser`, `_lastThink` | handle() 上下文, 给 builtin handler 用 |
+
+## 2. 五层路由判定（指令路径）
 
 指令路径处理函数: `Router.handle({ from, text, isLive, onThinking })`
 
@@ -37,7 +51,7 @@ parseCommand(text, cfg.cmdPrefix) → { isCmd, sub, arg }
    ↓
 [2] this.builtin[sub]   → 确定性命令(zero LLM)
    ↓
-[3] _runSubdirect(agent) → 子智能体(explore/math)
+[3] _classifyAndDispatch(sub, arg, from)  → 意图分类 + 派发 (2026-08-28 新增)
    ↓
 [4] main agent 回合       → llm.agentTurn 带工具循环
 ```
@@ -59,7 +73,26 @@ parseCommand(text, cfg.cmdPrefix) → { isCmd, sub, arg }
 - `explore`: `_delegateSub({ agent: 'explore', ... })` —— 联网/平台调研，工具视图收敛到 `resolveToolNames('explore')`；
 - `math`: 不走子代理，直接 `_safeMath(arg, from)` —— 表达式白名单 `^[0-9+\-*/.%\s()]+$` 防注入，再 `tools.dispatch('python', { code: print(<expr>) })` 取结果，**确定性 + 零 LLM**。
 
-### 2.4 第三层：main agent 回合（默认）
+### 2.4 第三层：意图分类 (2026-08-28 新增)
+
+```js
+const intentResult = await this._classifyAndDispatch(sub, arg, from);
+if (intentResult !== null && intentResult !== undefined) return String(intentResult);
+```
+
+仅作用于**带前缀但未命中 builtin** 的自由文本; 无前缀消息完全不受影响。分类器本体见 [intent.md](./intent.md)。
+
+| Intent | 派发路径 | 备注 |
+|---|---|---|
+| `explore` | `subagent._runSubdirect('explore', ...)` | 联网/调研 |
+| `math` | `_safeMath` (纯数字) 或 `subagent._runSubdirect('math', ...)` | 优先级: 数字白名单 → math 子智能体 |
+| `room` | `_parseRoomIntent` → builtin.create-room/close-room/rooms | 自然语言 "开个五子棋房间" → 路由到 create-room |
+| `query` | `_parseQueryIntent` → builtin.gold/online/stats/games/game | 自然语言 "今日金价" → gold |
+| `builtin`/`chat`/`main`/未知 | 返回 null → 回落到 main agent | 兜底 |
+
+详细 NLP 兜底规则见 [router-intent-dispatch.md](./router-intent-dispatch.md)。
+
+### 2.5 第四层：main agent 回合（默认）
 
 ```js
 const userText = (sub && !this.builtin[sub]) ? `${sub} ${arg}`.trim() : (arg || '');
@@ -73,44 +106,22 @@ this.sessions.pushAssistant(from, reply);
 - 把用户消息入库（`sessions.pushUser`），按需压缩；
 - `_buildMainSystemPrompt` 拼装环境 + 工具清单 + 摘要前缀；
 - `agentTurn` 驱动工具循环，工具视图按 `resolveToolNames('main')` 白名单。
+- 异常兜底: `'这个我暂时答不上来，换个问题试试？'` (2026-08-28 新增 try/catch, 防止 LLM 抛错拖死整轮)
 
-## 3. @ 提及处理
+## 3. @ 提及处理 (含拟人触发器, 2026-08-28 重构)
 
-### 3.1 `extractMention(content, username)`
+详见 [router-mention-persona.md](./router-mention-persona.md)。要点:
 
-```js
-export function extractMention(text, username) {
-  ...
-  const names = [username, username.replace(/的大黄鱼$/, '')].filter(Boolean);
-  const re = new RegExp(`@\\s*(${pat})[\\s:：]*([\\s\\S]*)`, 'i');
-  ...
-}
-```
-
-- 同时匹配完整登录名与去除 `<X>的大黄鱼` 后的领养人短名，**两者都视为 @ 提及**；
-- 匹配后去掉 @ 与名字、冒号/空格等分隔符，返回剩余正文（无正文则返回占位 `'(你 @ 到我了, 想聊点什么?)'`）。
-
-### 3.2 `handleMention({ from, text, ... })` — 纯聊天
-
-```js
-async handleMention({ from, text, isLive, onThinking }) {
-  if (!this.mentionEnabled()) return '';
-  const key = this._chatKey(from);                  // 'chat:' + from
-  this.sessions.pushUser(key, chatText);
-  if (this._summarize) await this.sessions.maybeCompress(key, this._summarize);
-  const sys = this._buildChatSystemPrompt(snap.summary);
-  reply = await this.llm.agentTurn({ systemPrompt: sys, history: snap.history, tools: this.chatView(), onThinking: () => {}, from });
-  this.sessions.pushAssistant(key, reply);
-  return reply;
-}
-```
-
-要点:
-
+- `extractMention(text, username)` —— 同时匹配完整登录名与领养人短名; 提取 @ 后正文
+- `handleMention({from, text, isLive, onThinking, repeatCount})` —— 拟人化聊天, 决策权在 persona trigger
+- `_buildChatSystemPrompt` —— human 分支 (拟人, 启动时 AI 生成的 prompt + 房间氛围 + 复读机升级模板) vs formal 分支 (助手, 工具视图空)
 - **不调任何工具、不做平台查询** —— `chatView()` 返回空工具视图 `tools.filter([])`；
-- 上下文键以 `chat:` 前缀，与命令会话完全隔离 —— 命令的历史与摘要不会污染闲聊上下文，反之亦然；
-- `onThinking = () => {}` —— @ 聊天**不发** "💭 好的" 等思考提示，避免污染闲谈体验；
-- `mentionEnabled` 默认 `cfg.mention?.enabled` —— 若关闭，`handleMention` 直接返回空串。
+- **上下文键以 `chat:` 前缀**，与命令会话完全隔离 —— 命令的历史与摘要不会污染闲聊上下文，反之亦然；
+- **`onThinking = () => {}`** —— @ 聊天**不发** "💭 好的" 等思考提示；
+- **`mentionEnabled` 默认 `cfg.mention?.enabled`** —— 若关闭，`handleMention` 直接返回空串。
+- **复读机协同**: `repeatCount >= 5` → 70% 概率直接装死; 与 [aggressive.md §8](./aggressive.md#8-harassment-tracker-api) 配合
+
+底层机制: [persona.md](./persona.md) (拟人触发器)、[aggressive.md](./aggressive.md) (复读计数)。
 
 ## 4. 子智能体委派 `delegate`
 
@@ -147,9 +158,10 @@ main agent 回合内的 `delegate` 工具通过 `tools.ctx.delegate = (opts) => 
 
 | 命令 (sub) | handler | LLM? | 工具/子智能体 | 说明 |
 |---|---|---|---|---|
-| `help` | `() => '可用指令:...'` | 否 | — | 列出 `tools.describe()` + 提示子智能体指令 |
+| `help` | `() => '可用指令:...'` | 否 | — | 列出 `tools.describe()` + 提示子智能体指令 + 拟人指令 (2026-08-28 补充) |
 | `tools` | `() => tools.describe()` | 否 | — | 工具清单 |
 | `agents` | `() => '子智能体: ...'` | 否 | — | 列出可用子智能体 |
+| `persona` | `_personaCmd(arg, from)` | 部分 | `persona.mjs` | 测试/重置/生成 拟人 prompt (2026-08-28 新增) |
 | `ping` | `() => 'pong 🎣'` | 否 | — | 存活探针 |
 | `online` | `() => 在线用户列表` | 否 | — | 读 `pondState.onlineUsers` |
 | `stats` | `() => 鱼塘现状 + 会话数` | 否 | — | 在线 / 会话数 / 待办概况 |
@@ -159,7 +171,7 @@ main agent 回合内的 `delegate` 工具通过 `tools.ctx.delegate = (opts) => 
 | `explore` | `_runSubdirect('explore', ...)` | 是 | 子智能体 `explore` | 联网调研类（独立工具视图） |
 | `math` | `_safeMath(arg)` | 否 | `python`（安全白名单） | 纯数字算式 |
 | `todo` | `_todoCmd(arg, from)` | 否 | `todoHelpers`（lib/todo） | 显示/添加/完成/更新/删除/清空 |
-| `skills` | `() => listSkills()` | 否 | `lib/skills` | 技能包列表（默认开） |
+| `skills` | `() => listSkills()` | 否 | `lib/business/skills` | 列出**内置**技能 (8 个, user_dir/user_url 见 [skill-system.md](./skill-system.md)) |
 | `记忆` | `_memoryCmd(from)` | 否 | `MemoryStore` | 列出已记住的用户事实 |
 | `压缩` | `_forceCompress(from)` | 是（一次性） | `summarizeWithLlm` | 强制压缩当前会话历史为摘要 |
 | `定时` | `_schedCmd(arg, from)` | 否 | `Scheduler` | 新建定时任务（remind） |
@@ -173,7 +185,7 @@ main agent 回合内的 `delegate` 工具通过 `tools.ctx.delegate = (opts) => 
 | `close-room` | `tools.dispatch('close_room', { roomId })` | 否 | `close_room` | 关闭房间（**无房主校验，见坑点**） |
 | `rooms` | `tools.dispatch('list_rooms', ...)` | 否 | `list_rooms` | 列出活动房间（读 `activeRooms` 增量维护） |
 
-未命中以上 sub 的输入会进入第 2.4 节的 main agent 回合。
+未命中以上 sub 的输入会进入第 2.5 节的 main agent 回合 (注: 实际上**先**经过第 2.4 节意图分类, 分类到 explore/math/room/query 才分流)。
 
 ## 6. 房间操作的实现
 

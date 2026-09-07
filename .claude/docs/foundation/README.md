@@ -7,16 +7,17 @@
 | 模块 | 一句话职责 | 主要依赖 |
 |---|---|---|
 | [`config.mjs`](../../../agent/config.mjs) | 从 `.env` / `process.env` 聚合所有运行配置, 无硬编码密钥 | Node `fs` / `path` |
-| [`lib/ws-client.mjs`](../../../agent/lib/ws-client.mjs) | 手写 WebSocket 帧编解码 + 连接/登录/心跳/僵死看门狗 + 请求-响应原语 | Node `net` / `crypto` |
-| `lib/llm.mjs` | DeepSeek (OpenAI 兼容) 客户端 + `agentTurn` / `agentRun` 回合 | config, sessions |
-| `lib/tool-core.mjs` | `defineTool` 工具定义框架 (schema + 执行 + 错误包装) | 无 |
-| `lib/tool-call-parse.mjs` | 从泄漏的 `<tool_use>` 文本里恢复工具调用 | tool-core |
-| `lib/compaction.mjs` | token 预算 + 结构化摘要 (旧消息压缩) | llm |
-| `lib/system.mjs` | 系统提示词拼接 (角色 + 工具 + 上下文) | config |
+| [`lib/foundation/ws-client.mjs`](../../../agent/lib/foundation/ws-client.mjs) | 手写 WebSocket 帧编解码 + 连接/登录/心跳/**僵死看门狗双信号** + 请求-响应原语 | Node `net` / `crypto` |
+| `lib/foundation/llm.mjs` | DeepSeek (OpenAI 兼容) 客户端 + `agentTurn` / `agentRun` 回合 | config, sessions |
+| `lib/foundation/tool-core.mjs` | `defineTool` 工具定义框架 (schema + 执行 + 错误包装) | 无 |
+| `lib/foundation/tool-call-parse.mjs` | 从泄漏的 `<tool_use>` 文本里恢复工具调用 | tool-core |
+| `lib/foundation/compaction.mjs` | token 预算 + 结构化摘要 (旧消息压缩) | llm |
+| `lib/foundation/system.mjs` | 系统提示词拼接 (角色 + 工具 + 上下文) | config |
 
 > 本目录详细文档:
 > - [config.md](./config.md) — 配置加载与所有 `.env` 变量
 > - [ws-client.md](./ws-client.md) — WS 协议、状态机、`sendActionAndWait` 原语
+> - [ws-client-watchdog.md](./ws-client-watchdog.md) — 僵死看门狗双信号机制详解 (NEW, 2026-08-28)
 > - [llm.md](./llm.md) — DeepSeek 客户端与 agent 工具循环
 > - [tool-core.md](./tool-core.md) — `defineTool` 工具定义框架
 > - [tool-call-parse.md](./tool-call-parse.md) — 泄漏工具调用文本恢复

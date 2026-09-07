@@ -11,6 +11,7 @@ import { run as runSessions } from './unit/sessions.mjs';
 import { run as runScheduler } from './unit/scheduler.mjs';
 import { run as runScripts } from './unit/run-scripts.mjs';
 import { run as runPersona } from './unit/persona.mjs';
+import { run as runAggressive } from './unit/aggressive.mjs';
 
 await runParseCommand();
 await runTools();
@@ -20,6 +21,7 @@ await runSessions();
 await runScheduler();
 await runScripts();
 await runPersona();
+await runAggressive();
 
 if (state.failures) {
   console.error(`\n❌ UNIT FAIL: ${state.failures} 项失败`);

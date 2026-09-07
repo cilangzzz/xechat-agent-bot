@@ -1,6 +1,8 @@
-# lib/ws-client.mjs — WebSocket 连接层
+# lib/foundation/ws-client.mjs — WebSocket 连接层
 
-[`agent/lib/ws-client.mjs`](../../../agent/lib/ws-client.mjs) 把原 `/大黄鱼` bot 的协议核心 (`listen_reply.mjs`) 抽出, 封装为可复用的 `WsClient` 类。
+[`agent/lib/foundation/ws-client.mjs`](../../../agent/lib/foundation/ws-client.mjs) 把原 `/大黄鱼` bot 的协议核心 (`listen_reply.mjs`) 抽出, 封装为可复用的 `WsClient` 类。
+
+> **2026-08-28 更新** (commit `98b006a`+): 文件从 `lib/ws-client.mjs` 迁移到 `lib/foundation/ws-client.mjs`; **僵死看门狗逻辑重写** —— 现在同时追踪"入站数据"和"心跳写入"两个时间戳, 两者都超过 `staleTimeoutMs` 才判定僵死, 修复"安静鱼塘被误判僵死"问题。
 
 ## 1. 设计目标
 
@@ -142,20 +144,36 @@ data 事件
    └─ 每次 data 更新 lastData (看门狗用)
 ```
 
-## 5. 僵死看门狗
+## 5. 僵死看门狗 (续费心跳版, 2026-08-28 重写)
+
+> 完整说明见 [ws-client-watchdog.md](./ws-client-watchdog.md)
 
 ```js
+let lastData = Date.now();           // 入站数据时间戳
+let lastHeartbeatOk = Date.now();    // 心跳写入成功时间戳 (新增)
+
+setInterval(() => {
+  try {
+    sendText(JSON.stringify({ action: 'HEARTBEAT' }));
+    lastHeartbeatOk = Date.now();    // 写入未抛即视为存活信号
+  } catch (e) {}
+}, heartbeatMs);
+
 watchdog = setInterval(() => {
-  if (Date.now() - lastData > opts.staleTimeoutMs) {
+  const now = Date.now();
+  const staleData = (now - lastData)     > staleTimeoutMs;
+  const staleHb   = (now - lastHeartbeatOk) > staleTimeoutMs;
+  if (staleData && staleHb) {            // 两个条件都满足才触发重连
     finish('stale');
   }
 }, 30000);
 ```
 
-- `lastData` 在每次 `sock.on('data')` 时更新
-- 看门狗每 30s 检查一次 (而不是每 staleTimeoutMs)
-- 超过 `staleTimeoutMs` (默认 90s) 无任何数据 → 主动 `finish('stale')`, 外层走普通重连 (3s)
-- **作用**: 防止"TCP 还活着但服务端不再推消息"导致的静默死连接 (NAT 超时 / 运营商旁路)
+要点:
+- **双信号机制**: 单独看 `lastData` 会把"安静鱼塘"误判僵死, 必须同时看心跳写入
+- **HEARTBEAT 服务端不返回任何包** —— 写入成功即可视链路存活
+- 两个时间戳都 stale 才 `finish('stale')`
+- 详见 [ws-client-watchdog.md](./ws-client-watchdog.md) 的背景 / 调试 / 时间戳表
 
 ## 6. 登录被拒识别
 
@@ -222,3 +240,7 @@ sendText(JSON.stringify({ action: 'HEARTBEAT' }));
 ### 8.6 `finish()` 一次性清理
 
 `finish(why)` 清空 `_timers` / `_waiters` / `sock.destroy()`, 同一个 `WsClient` 实例**不应**复用 —— 每次重连 `agent.mjs` 会 `new WsClient(cfg)` 重建。
+
+### 8.7 安静鱼塘 vs 真死链区分 (2026-08-28)
+
+老 bot / 第一版 ws-client 用单一 `lastData` 判定僵死, 在鱼塘夜间无人发言时频繁误触发重连。新版增加 `lastHeartbeatOk` 双信号, 解决此问题。详见 [ws-client-watchdog.md §1](./ws-client-watchdog.md#1-背景-为什么要双信号) 与 §4 调试指南。

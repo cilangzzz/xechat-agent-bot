@@ -578,8 +578,12 @@ const FISH_POND_SLANG_POOL = [
 
 /** 骂家庭用的谐音字 (妈/爸/人/家人 的同音/拆字伪装) —— 任何包含这些的 LLM 输出都拦
  *  注意: 谐音字可能在词中/句中以"立人"(人)/"冯"(妈)/"牛魔"(妈)/"福"(妈)/"逼"(女阴)/"沙雕"(傻屌) 等形式出现
- *  配合下面 humanizeReply 的 (硬) 拦名单 —— 模型再怎么变体都拦 */
-const FAMILY_SLUR_HOMOPHONES = [
+ *  配合下面 humanizeReply 的 (硬) 拦名单 —— 模型再怎么变体都拦
+ *
+ *  v3 (2026-09-02): 拆成两个数组, 死字相关放到 DEATH_PATTERNS 里永远 strip (noFamilyFilter 也挡不住),
+ *  妈/爸/人/家人谐音放 SLUR_VARIANTS 里可被 noFamilyFilter opt-out. 理由: 死字是绝对红线 (用户硬约束),
+ *  妈/爸谐音是可放宽 (运营者按 bot 决定). */
+const SLUR_VARIANTS = [
   // 妈 的变体
   /冯/g, // 冯
   /牛魔/g,    // 你妈 (牛魔 = 你妈的谐音)
@@ -592,15 +596,12 @@ const FAMILY_SLUR_HOMOPHONES = [
   // 人/家人 的变体
   /立人/g, // 立人
   /人查/g, // 人渣
-  // 家人死/无 的变体
   /无了/g, // 无了 (你家X无了 / 立人无了)
-  /死/g, // 殁 / 没了
-  // 死亡威胁变体
-  /祝你.{0,3}死/g,
-  /你.{0,3}死/g,
-  /你家.{0,5}(死|没|无|亡|灭|走)/g,
-  /你妈.{0,5}(死|没|无|亡|灭)/g,
-  /你爸.{0,5}(死|没|无|亡|灭)/g,
+];
+
+/** 死字相关 — 永远 strip, 不受 noFamilyFilter 影响. 这是用户对几波大等 bot 的硬约束. */
+const DEATH_PATTERNS = [
+  /死/g, // 殁 / 没了 — 永远剥, 哪怕其他妈/爸谐音已被允许
 ];
 
 /** 各种随机决策 (rng 注入便于测试) */
@@ -735,17 +736,24 @@ export function humanizeReply(text, ctx = {}) {
   s = s.replace(/见好就收吧\s*[,,]?\s*不然下次见你就是跌停板见[。.！!]?/g, '见好就收');
 
   // ── 5.3 骂家庭的谐音变体 硬拦截 (绝对红线, 不管 LLM 输出成什么样都拦)
-  // 包括: 冯/福/牛魔/他吗/八爷/立人 等谐音/拆字伪装"妈/爸/人/家人"
-  // 同时拦"你家X死" / "你妈死" / "祝你死" 等真实死亡威胁变体
-  for (const re of FAMILY_SLUR_HOMOPHONES) {
+  // v3 (2026-09-02): 拆成两层
+  //   - DEATH_PATTERNS (死字): 永远 strip, 不受 noFamilyFilter 影响
+  //   - SLUR_VARIANTS (妈/爸/家人 谐音): opt-out 走 ctx.noFamilyFilter
+  // 死字是用户对几波大等 bot 的硬约束, 不能因为放开妈/爸谐音就连死字也放出去
+  for (const re of DEATH_PATTERNS) {
     s = s.replace(re, '');
   }
-  // 二次清扫: 残留的 "你 X 死" / "妈死" / "X 死" 单独串
-  s = s.replace(/你\s*妈\s*死/g, '');
-  s = s.replace(/你家\s*人\s*死/g, '');
-  s = s.replace(/你\s*爸\s*死/g, '');
-  s = s.replace(/祝你.{0,2}死/g, '');
-  s = s.replace(/(妈|爸|家人|父母|亲人).{0,3}(死|亡|没了|无了)/g, '');
+  if (!ctx.noFamilyFilter) {
+    for (const re of SLUR_VARIANTS) {
+      s = s.replace(re, '');
+    }
+    // 二次清扫: 残留的 "你 X 死" / "妈死" / "X 死" 单独串
+    s = s.replace(/你\s*妈\s*死/g, '');
+    s = s.replace(/你家\s*人\s*死/g, '');
+    s = s.replace(/你\s*爸\s*死/g, '');
+    s = s.replace(/祝你.{0,2}死/g, '');
+    s = s.replace(/(妈|爸|家人|父母|亲人).{0,3}(死|亡|没了|无了)/g, '');
+  }
 
   // ── 6) 长破折号 → 逗号, 末尾清理 ──
   s = s.replace(/——/g, ',').replace(/—/g, ',');
@@ -765,6 +773,33 @@ export function humanizeReply(text, ctx = {}) {
 
 /** 暴露给 router 用的 system prompt 串 (基础种子, 未生成时兜底) */
 export function getHumanSystemPrompt() { return BASE_PERSONA_PROMPT; }
+
+/**
+ * 防模板化: 短裸回 (≤6 字且无前置) 自动加 "啧/哎/嗯嗯/哈/我超" 等前置,
+ * 让 LLM 输出 "你🐴呢 爬" 这种赤裸回自动变成 "啧 你🐴呢 爬", 更像真人微信
+ * (重复的 "你🐴呢" 也不那么显得机器人)
+ */
+const PREFIX_POOL = ['啧', '哎', '嗯嗯', '哈', '我超', '我去', '切', '行', '嗐', '呵'];
+/**
+ * 防模板化 (v2 防御性兜底 — LLM 应该自己产出前置, 这是最后防线)
+ * LLM 主路径已经在 persona prompt 里强制每条都要带自然前置了;
+ *  如果 LLM 还是没带 (比如短裸回 "你🐴呢"), 这里只对 "你+骂" / "?" / 单字动作 这些
+ *  最赤裸的形式做一个最小的兜底 (前置 1 字), 不再随机套一个固定池
+ */
+export function _addReplyPrefix(text, rng = Math.random) {
+  const s = String(text || '').trim();
+  if (!s) return s;
+  const first = s.charAt(0);
+  // 已经有语气词/代词/连接词 → 不再加 (LLM 自己挑的)
+  if (['啧', '哎', '嗯', '哈', '嗐', '呵', '哦', '我', '咱', '真', '好', '别', '行', '切', '操', '也', '再', '还', '就', '都', '的', '啥', '问'].includes(first)) return s;
+  // 真正的裸回 (LLM 漏了前置) → 兜底加一个轻量前置
+  if ([...s].length <= 4) {
+    // 只对极短裸回 (≤4 字) 加 — 5-6 字的算"有内容", 容忍
+    const prefix = PREFIX_POOL[Math.floor(rng() * PREFIX_POOL.length)];
+    return `${prefix} ${s}`;
+  }
+  return s;
+}
 
 /**
  * 人设 prompt 引擎 —— 启动时调一次 LLM, 用 BASE_PERSONA_PROMPT (李乐儿) 当种子,
@@ -889,5 +924,5 @@ export const _internal = { scoreMessage, add, clamp01 };
 export default {
   MODE_FORMAL, MODE_HUMAN,
   createPersonaTrigger, createPersonaEngine, pickPersona, scoreMessage,
-  getHumanSystemPrompt,
+  getHumanSystemPrompt, humanizeReply, _addReplyPrefix,
 };
